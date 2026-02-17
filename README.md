@@ -6,7 +6,7 @@ Minimal, non-production autonomous agent harness built with LangGraph Deep Agent
 
 ```bash
 uv init --python 3.11
-uv add --editable /path/to/open-strix
+uv add open-strix
 uv run open-strix
 ```
 

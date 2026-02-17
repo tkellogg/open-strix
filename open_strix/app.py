@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 import re
@@ -28,12 +29,15 @@ LOG_ROLL_BYTES = 1_000_000
 ERROR_REACTION_EMOJI = "❌"
 WARNING_REACTION_EMOJI = "⚠️"
 STATE_DIR_NAME = "state"
+DEFAULT_MODEL = "MiniMax-M2.5"
+DEFAULT_MODEL_PROVIDER = "anthropic"
 
 DEFAULT_CONFIG = """\
-model: null
+model: MiniMax-M2.5
 journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
+always_respond_bot_ids: []
 git_sync_after_turn: true
 """
 
@@ -140,6 +144,22 @@ def _safe_bool(value: Any, default: bool = True) -> bool:
     return bool(value)
 
 
+def _normalize_id_list(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        raw_items = [item.strip() for item in value.split(",")]
+        return {item for item in raw_items if item}
+    if isinstance(value, list):
+        normalized = {
+            str(item).strip()
+            for item in value
+            if str(item).strip()
+        }
+        return normalized
+    return set()
+
+
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug or "block"
@@ -218,6 +238,13 @@ def _normalize_predictions(value: Any) -> list[str]:
     if bullet_values and len(bullet_values) == len(lines):
         return [line for line in bullet_values if line]
     return lines
+
+
+def _model_for_deep_agents(model_name: str) -> str:
+    cleaned = model_name.strip()
+    if ":" in cleaned:
+        return cleaned
+    return f"{DEFAULT_MODEL_PROVIDER}:{cleaned}"
 
 
 def _git_sync(home: Path) -> str:
@@ -321,10 +348,11 @@ class RepoLayout:
 
 @dataclass
 class AppConfig:
-    model: str | None = None
+    model: str = DEFAULT_MODEL
     journal_entries_in_prompt: int = 90
     discord_messages_in_prompt: int = 10
     discord_token_env: str = "DISCORD_TOKEN"
+    always_respond_bot_ids: set[str] = field(default_factory=set)
     git_sync_after_turn: bool = True
 
 
@@ -334,10 +362,12 @@ class AgentEvent:
     prompt: str
     channel_id: str | None = None
     author: str | None = None
+    author_id: str | None = None
     attachment_names: list[str] = field(default_factory=list)
     scheduler_name: str | None = None
     dedupe_key: str | None = None
     source_id: str | None = None
+    force_reply: bool = False
 
 
 @dataclass
@@ -439,7 +469,11 @@ class DiscordBridge(discord.Client):
         self._app.log_event("discord_ready", user=str(self.user))
 
     async def on_message(self, message: discord.Message) -> None:
-        if message.author.bot:
+        author_id = getattr(message.author, "id", None)
+        if not self._app.should_process_discord_message(
+            author_is_bot=bool(getattr(message.author, "bot", False)),
+            author_id=author_id,
+        ):
             return
         await self._app.handle_discord_message(message)
 
@@ -467,7 +501,7 @@ class OpenStrixApp:
         self._current_turn_sent_messages: list[tuple[str, str]] | None = None
 
         backend = StateWriteGuardBackend(root_dir=self.home, state_dir=STATE_DIR_NAME)
-        model = self.config.model if self.config.model else None
+        model = _model_for_deep_agents(self.config.model)
         skills = ["/skills"] if self.layout.skills_dir.exists() else None
 
         self.agent = create_deep_agent(
@@ -502,6 +536,21 @@ class OpenStrixApp:
             "predictions": predictions,
         }
         _append_jsonl(self.layout.journal_log, entry)
+
+    def should_respond_to_bot(self, author_id: str | int | None) -> bool:
+        if author_id is None:
+            return False
+        return str(author_id) in self.config.always_respond_bot_ids
+
+    def should_process_discord_message(
+        self,
+        *,
+        author_is_bot: bool,
+        author_id: str | int | None,
+    ) -> bool:
+        if not author_is_bot:
+            return True
+        return self.should_respond_to_bot(author_id)
 
     def _iter_block_files(self) -> list[Path]:
         files = list(self.layout.blocks_dir.glob("*.yaml"))
@@ -557,6 +606,45 @@ class OpenStrixApp:
             idx += 1
         return f"{block_id}-{idx}"
 
+    async def _send_discord_message(
+        self,
+        *,
+        channel_id: str,
+        text: str,
+    ) -> tuple[bool, str | None]:
+        sent = False
+        sent_message_id: str | None = None
+        if self.discord_client and self.discord_client.is_ready():
+            try:
+                channel_int = int(channel_id)
+            except ValueError:
+                channel_int = -1
+            if channel_int > 0:
+                channel = self.discord_client.get_channel(channel_int)
+                if channel is None:
+                    channel = await self.discord_client.fetch_channel(channel_int)
+                if isinstance(channel, discord.abc.Messageable):
+                    sent_msg = await channel.send(text)
+                    sent_message_id = str(getattr(sent_msg, "id", "")) or None
+                    self._remember_message(
+                        channel_id=channel_id,
+                        author="open_strix",
+                        content=text,
+                        attachment_names=[],
+                        message_id=sent_message_id,
+                        is_bot=True,
+                        source="discord",
+                    )
+                    if self._current_turn_sent_messages is not None:
+                        self._current_turn_sent_messages.append(
+                            (channel_id, sent_message_id),
+                        )
+                    sent = True
+
+        if not sent:
+            print(f"[open-strix send_message channel={channel_id}] {text}")
+        return sent, sent_message_id
+
     def _build_tools(self) -> list[Any]:
         @tool("send_message")
         async def send_message(text: str, channel_id: str | None = None) -> str:
@@ -565,37 +653,10 @@ class OpenStrixApp:
             if target_channel_id is None:
                 return "No channel_id provided and no current event channel is available."
 
-            sent = False
-            sent_message_id: str | None = None
-            if self.discord_client and self.discord_client.is_ready():
-                try:
-                    channel_int = int(target_channel_id)
-                except ValueError:
-                    channel_int = -1
-                if channel_int > 0:
-                    channel = self.discord_client.get_channel(channel_int)
-                    if channel is None:
-                        channel = await self.discord_client.fetch_channel(channel_int)
-                    if isinstance(channel, discord.abc.Messageable):
-                        sent_msg = await channel.send(text)
-                        sent_message_id = str(getattr(sent_msg, "id", "")) or None
-                        self._remember_message(
-                            channel_id=target_channel_id,
-                            author="open_strix",
-                            content=text,
-                            attachment_names=[],
-                            message_id=sent_message_id,
-                            is_bot=True,
-                            source="discord",
-                        )
-                        if self._current_turn_sent_messages is not None:
-                            self._current_turn_sent_messages.append(
-                                (target_channel_id, sent_message_id),
-                            )
-                        sent = True
-
-            if not sent:
-                print(f"[open-strix send_message channel={target_channel_id}] {text}")
+            sent, sent_message_id = await self._send_discord_message(
+                channel_id=target_channel_id,
+                text=text,
+            )
 
             self.log_event(
                 "tool_call",
@@ -965,6 +1026,9 @@ class OpenStrixApp:
         prompt = (message.content or "").strip()
         if not prompt:
             prompt = "User sent a message with no text."
+        author_id = str(getattr(message.author, "id", "")).strip() or None
+        author_is_bot = bool(getattr(message.author, "bot", False))
+        force_reply = author_is_bot and self.should_respond_to_bot(author_id)
 
         self._remember_message(
             channel_id=str(message.channel.id),
@@ -972,12 +1036,16 @@ class OpenStrixApp:
             content=message.content or "",
             attachment_names=attachment_names,
             message_id=str(message.id),
+            is_bot=author_is_bot,
             source="discord",
         )
         self.log_event(
             "discord_message",
             channel_id=str(message.channel.id),
             author=str(message.author),
+            author_id=author_id,
+            author_is_bot=author_is_bot,
+            force_reply=force_reply,
             attachment_names=attachment_names,
             source_id=str(message.id),
         )
@@ -987,8 +1055,10 @@ class OpenStrixApp:
                 prompt=prompt,
                 channel_id=str(message.channel.id),
                 author=str(message.author),
+                author_id=author_id,
                 attachment_names=attachment_names,
                 source_id=str(message.id),
+                force_reply=force_reply,
             ),
         )
 
@@ -1100,6 +1170,65 @@ class OpenStrixApp:
             message_id=message_id,
             emoji=emoji,
         )
+
+    @asynccontextmanager
+    async def _typing_indicator(self, event: AgentEvent):
+        channel_id = event.channel_id
+        if channel_id is None:
+            yield
+            return
+
+        if self.discord_client is None or not self.discord_client.is_ready():
+            yield
+            return
+
+        try:
+            channel_int = int(channel_id)
+        except ValueError:
+            yield
+            return
+
+        channel = self.discord_client.get_channel(channel_int)
+        if channel is None:
+            try:
+                channel = await self.discord_client.fetch_channel(channel_int)
+            except Exception as exc:
+                self.log_event(
+                    "typing_indicator_error",
+                    source_event_type=event.event_type,
+                    channel_id=channel_id,
+                    source_id=event.source_id,
+                    error=str(exc),
+                )
+                yield
+                return
+
+        typing_method = getattr(channel, "typing", None)
+        if typing_method is None:
+            yield
+            return
+
+        typing_context = typing_method()
+        if not hasattr(typing_context, "__aenter__") or not hasattr(typing_context, "__aexit__"):
+            yield
+            return
+
+        self.log_event(
+            "typing_indicator_start",
+            source_event_type=event.event_type,
+            channel_id=channel_id,
+            source_id=event.source_id,
+        )
+        async with typing_context:
+            try:
+                yield
+            finally:
+                self.log_event(
+                    "typing_indicator_stop",
+                    source_event_type=event.event_type,
+                    channel_id=channel_id,
+                    source_id=event.source_id,
+                )
 
     async def _run_post_turn_git_sync(self, event: AgentEvent) -> str:
         if not self.config.git_sync_after_turn:
@@ -1299,7 +1428,8 @@ class OpenStrixApp:
             scheduler_name=event.scheduler_name,
         )
         try:
-            result = await self.agent.ainvoke({"messages": [HumanMessage(content=prompt)]})
+            async with self._typing_indicator(event):
+                result = await self.agent.ainvoke({"messages": [HumanMessage(content=prompt)]})
             self._log_agent_trace(result)
 
             final_text = self._extract_final_text(result)
@@ -1309,6 +1439,26 @@ class OpenStrixApp:
                 channel_id=event.channel_id,
                 final_text=final_text,
             )
+            if event.force_reply and not (self._current_turn_sent_messages or []):
+                fallback_text = final_text.strip() if final_text.strip() else "Acknowledged."
+                if event.channel_id is None:
+                    sent, sent_message_id = False, None
+                else:
+                    sent, sent_message_id = await self._send_discord_message(
+                        channel_id=event.channel_id,
+                        text=fallback_text,
+                    )
+                self.log_event(
+                    "forced_bot_reply",
+                    source_event_type=event.event_type,
+                    channel_id=event.channel_id,
+                    source_id=event.source_id,
+                    author_id=event.author_id,
+                    sent=sent,
+                    message_id=sent_message_id,
+                    used_final_text=bool(final_text.strip()),
+                    text_preview=fallback_text[:300],
+                )
             await self._run_post_turn_git_sync(event)
         finally:
             self._current_turn_sent_messages = None
@@ -1405,13 +1555,38 @@ class OpenStrixApp:
 
 def load_config(layout: RepoLayout) -> AppConfig:
     loaded = yaml.safe_load(layout.config_file.read_text(encoding="utf-8")) or {}
+    model_raw = loaded.get("model", DEFAULT_MODEL)
+    model = str(model_raw).strip() if model_raw is not None else ""
+    if not model:
+        model = DEFAULT_MODEL
     return AppConfig(
-        model=loaded.get("model"),
+        model=model,
         journal_entries_in_prompt=int(loaded.get("journal_entries_in_prompt", 90)),
         discord_messages_in_prompt=int(loaded.get("discord_messages_in_prompt", 10)),
         discord_token_env=str(loaded.get("discord_token_env", "DISCORD_TOKEN")),
+        always_respond_bot_ids=_normalize_id_list(loaded.get("always_respond_bot_ids")),
         git_sync_after_turn=_safe_bool(loaded.get("git_sync_after_turn"), True),
     )
+
+
+def _ensure_config_defaults(config_file: Path) -> None:
+    loaded = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+    if not isinstance(loaded, dict):
+        loaded = {}
+
+    changed = False
+    model_raw = loaded.get("model")
+    model = str(model_raw).strip() if model_raw is not None else ""
+    if not model:
+        loaded["model"] = DEFAULT_MODEL
+        changed = True
+
+    if "always_respond_bot_ids" not in loaded:
+        loaded["always_respond_bot_ids"] = []
+        changed = True
+
+    if changed:
+        config_file.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
 
 
 def bootstrap_home_repo(layout: RepoLayout) -> None:
@@ -1425,6 +1600,7 @@ def bootstrap_home_repo(layout: RepoLayout) -> None:
     (layout.skills_dir / ".gitkeep").touch(exist_ok=True)
     (layout.scripts_dir / ".gitkeep").touch(exist_ok=True)
     _write_if_missing(layout.config_file, DEFAULT_CONFIG)
+    _ensure_config_defaults(layout.config_file)
     _write_if_missing(layout.scheduler_file, DEFAULT_SCHEDULER)
     _write_if_missing(layout.checkpoint_file, DEFAULT_CHECKPOINT)
     _write_if_missing(layout.scripts_dir / "pre_commit.py", DEFAULT_PRE_COMMIT_SCRIPT)
@@ -1444,7 +1620,37 @@ set -eu
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
-uv run python scripts/pre_commit.py
+
+# Hooks can run with a minimal PATH, so prefer explicit locations first.
+if [ -x "$repo_root/.venv/bin/uv" ]; then
+  exec "$repo_root/.venv/bin/uv" run python scripts/pre_commit.py
+fi
+
+if command -v uv >/dev/null 2>&1; then
+  exec uv run python scripts/pre_commit.py
+fi
+
+if [ -x "$HOME/.local/bin/uv" ]; then
+  exec "$HOME/.local/bin/uv" run python scripts/pre_commit.py
+fi
+
+if command -v python3 >/dev/null 2>&1 && python3 -c "import uv" >/dev/null 2>&1; then
+  exec python3 -m uv run python scripts/pre_commit.py
+fi
+
+# Last resort: run the script directly with Python.
+if [ -x "$repo_root/.venv/bin/python" ]; then
+  exec "$repo_root/.venv/bin/python" scripts/pre_commit.py
+fi
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 scripts/pre_commit.py
+fi
+if command -v python >/dev/null 2>&1; then
+  exec python scripts/pre_commit.py
+fi
+
+echo "[open-strix pre-commit] uv/python not found; cannot run scripts/pre_commit.py" >&2
+exit 1
 """
     pre_commit.write_text(hook, encoding="utf-8")
     pre_commit.chmod(0o755)

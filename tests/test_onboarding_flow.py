@@ -50,7 +50,9 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     assert not missing, f"missing onboarding files: {missing}"
 
     hook_text = (home / ".git" / "hooks" / "pre-commit").read_text(encoding="utf-8")
-    assert "uv run python scripts/pre_commit.py" in hook_text
+    assert "scripts/pre_commit.py" in hook_text
+    assert "command -v uv" in hook_text
+    assert ".venv/bin/uv" in hook_text
 
     gitignore_lines = {
         line.strip()
@@ -60,6 +62,8 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     assert ".env" in gitignore_lines
 
     config_text = (home / "config.yaml").read_text(encoding="utf-8")
+    assert "model: MiniMax-M2.5" in config_text
+    assert "always_respond_bot_ids: []" in config_text
     assert "default_reply_channel" not in config_text
     assert "state_dir" not in config_text
     assert "git_sync_before_send" not in config_text

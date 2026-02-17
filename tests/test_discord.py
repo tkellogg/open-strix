@@ -20,6 +20,45 @@ def _stub_agent_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_mod, "create_deep_agent", lambda **_: DummyAgent())
 
 
+def test_default_model_is_minimax_even_if_config_model_is_null(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_create_deep_agent(**kwargs: Any) -> DummyAgent:
+        captured.update(kwargs)
+        return DummyAgent()
+
+    monkeypatch.setattr(app_mod, "create_deep_agent", fake_create_deep_agent)
+    (tmp_path / "config.yaml").write_text("model: null\n", encoding="utf-8")
+
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    assert app.config.model == "MiniMax-M2.5"
+    assert captured["model"] == "anthropic:MiniMax-M2.5"
+    config_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert "model: MiniMax-M2.5" in config_text
+    assert "always_respond_bot_ids: []" in config_text
+
+
+def test_bot_allowlist_config_controls_message_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "always_respond_bot_ids:\n"
+        "  - 42\n",
+        encoding="utf-8",
+    )
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    assert app.should_process_discord_message(author_is_bot=False, author_id=None) is True
+    assert app.should_process_discord_message(author_is_bot=True, author_id="7") is False
+    assert app.should_process_discord_message(author_is_bot=True, author_id="42") is True
+
+
 @pytest.mark.asyncio
 async def test_run_starts_discord_with_configured_token_env(
     tmp_path: Path,
@@ -97,6 +136,41 @@ async def test_handle_discord_message_queues_event_and_saves_attachments(
     assert queued.attachment_names
     attachment_path = tmp_path / queued.attachment_names[0]
     assert attachment_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_handle_discord_message_from_allowlisted_bot_sets_force_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "always_respond_bot_ids:\n"
+        "  - 42\n",
+        encoding="utf-8",
+    )
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeAuthor:
+        bot = True
+        id = 42
+
+        def __str__(self) -> str:
+            return "other-bot"
+
+    message = SimpleNamespace(
+        id=12345,
+        content="ping from bot",
+        channel=SimpleNamespace(id=999),
+        author=FakeAuthor(),
+        attachments=[],
+    )
+
+    await app.handle_discord_message(message)
+
+    queued = app.queue.get_nowait()
+    assert queued.force_reply is True
+    assert queued.author_id == "42"
 
 
 @pytest.mark.asyncio
@@ -342,3 +416,142 @@ async def test_event_worker_reacts_to_last_user_message_on_error(
             await worker
 
     assert channel.message_by_id[777].reactions == [app_mod.ERROR_REACTION_EMOJI]
+
+
+@pytest.mark.asyncio
+async def test_process_event_turn_enables_discord_typing_indicator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    app.config.git_sync_after_turn = False
+
+    class FakeTypingContext:
+        def __init__(self, channel: "FakeChannel") -> None:
+            self._channel = channel
+
+        async def __aenter__(self) -> None:
+            self._channel.typing_entered += 1
+            self._channel.typing_active = True
+
+        async def __aexit__(self, *_: Any) -> None:
+            self._channel.typing_active = False
+            self._channel.typing_exited += 1
+
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.typing_entered = 0
+            self.typing_exited = 0
+            self.typing_active = False
+
+        def typing(self) -> FakeTypingContext:
+            return FakeTypingContext(self)
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    observed: dict[str, bool] = {"typing_active_during_ainvoke": False}
+
+    class FakeAgent:
+        async def ainvoke(self, _: dict[str, Any]) -> dict[str, Any]:
+            observed["typing_active_during_ainvoke"] = channel.typing_active
+            return {"messages": []}
+
+    app.agent = FakeAgent()
+    await app._process_event(
+        app_mod.AgentEvent(
+            event_type="discord_message",
+            prompt="hello",
+            channel_id="123",
+            author="alice",
+            source_id="999",
+        ),
+    )
+
+    assert observed["typing_active_during_ainvoke"] is True
+    assert channel.typing_entered == 1
+    assert channel.typing_exited == 1
+
+
+@pytest.mark.asyncio
+async def test_force_reply_event_sends_message_when_agent_did_not_use_send_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    app.config.git_sync_after_turn = False
+
+    class FakeMessageable:
+        pass
+
+    class FakeSentMessage:
+        def __init__(self, message_id: int) -> None:
+            self.id = message_id
+
+    class FakeChannel(FakeMessageable):
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, text: str) -> FakeSentMessage:
+            self.sent.append(text)
+            return FakeSentMessage(555)
+
+        def typing(self):
+            class _NoopTyping:
+                async def __aenter__(self) -> None:
+                    return None
+
+                async def __aexit__(self, *_: Any) -> None:
+                    return None
+
+            return _NoopTyping()
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    class FakeAgent:
+        async def ainvoke(self, _: dict[str, Any]) -> dict[str, Any]:
+            return {"messages": []}
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    app.agent = FakeAgent()
+    monkeypatch.setattr(app_mod.discord.abc, "Messageable", FakeMessageable)
+
+    await app._process_event(
+        app_mod.AgentEvent(
+            event_type="discord_message",
+            prompt="bot says hi",
+            channel_id="123",
+            author="other-bot",
+            author_id="42",
+            source_id="777",
+            force_reply=True,
+        ),
+    )
+
+    assert channel.sent == ["Acknowledged."]
