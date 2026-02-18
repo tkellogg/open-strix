@@ -1,6 +1,24 @@
 # open-strix
+[![PyPI version](https://img.shields.io/pypi/v/open-strix.svg)](https://pypi.org/project/open-strix/)
 
 Minimal, non-production autonomous agent harness built with LangGraph Deep Agents.
+
+## Install uv
+
+Install `uv` first:
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Official install docs (alternate methods like Homebrew, pipx, winget):
+- https://docs.astral.sh/uv/getting-started/installation/
 
 ## Quick start
 
