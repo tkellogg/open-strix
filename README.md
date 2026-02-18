@@ -42,6 +42,48 @@ On first run, `open-strix` bootstraps the current directory with:
 It connects to Discord if a token is present (by default `DISCORD_TOKEN`).
 Otherwise it runs in local stdin mode.
 
+## Create a GitHub repo and set remote
+
+`open-strix` auto-syncs with git after each turn, so set up a repo + remote early.
+
+### Option A: GitHub CLI (`gh`)
+
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+gh auth login
+gh repo create <repo-name> --private --source=. --remote=origin --push
+```
+
+Keep this private, since agent memory and logs can contain sensitive context.
+
+### Option B: GitHub web UI
+
+1. Create a new **private** empty repo on GitHub (no README, no `.gitignore`, no license).
+2. In your project directory:
+
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+git branch -M main
+git remote add origin git@github.com:<your-user>/<repo-name>.git
+git push -u origin main
+```
+
+If you prefer HTTPS:
+
+```bash
+git remote add origin https://github.com/<your-user>/<repo-name>.git
+```
+
+Check remote config:
+
+```bash
+git remote -v
+```
+
 ## Environment setup
 
 Start from the example env file:
