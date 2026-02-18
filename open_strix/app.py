@@ -22,7 +22,7 @@ from deepagents.backends import FilesystemBackend
 from deepagents.backends.protocol import EditResult, FileUploadResponse, WriteResult
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.tools import tool
+from langchain_core.tools import ToolException, tool
 
 UTC = timezone.utc
 LOG_ROLL_BYTES = 1_000_000
@@ -772,8 +772,35 @@ class OpenStrixApp:
                             channel = self.discord_client.get_channel(channel_int)
                             if channel is None:
                                 channel = await self.discord_client.fetch_channel(channel_int)
-                            history_method = getattr(channel, "history", None)
-                            if history_method is not None:
+                        except discord.NotFound as exc:
+                            self.log_event(
+                                "list_messages_channel_not_found",
+                                channel_id=target_channel_id,
+                                code=getattr(exc, "code", None),
+                            )
+                            raise ToolException(
+                                f"Channel {target_channel_id} was not found. Use a valid channel_id or omit it to use the current channel.",
+                            ) from exc
+                        except discord.Forbidden as exc:
+                            self.log_event(
+                                "list_messages_channel_forbidden",
+                                channel_id=target_channel_id,
+                                code=getattr(exc, "code", None),
+                            )
+                            raise ToolException(
+                                f"Cannot access channel {target_channel_id}. Check bot permissions.",
+                            ) from exc
+                        except Exception as exc:
+                            self.log_event(
+                                "list_messages_channel_lookup_error",
+                                channel_id=target_channel_id,
+                                error_type=type(exc).__name__,
+                            )
+                            raise ToolException("Failed to look up the Discord channel.") from exc
+
+                        history_method = getattr(channel, "history", None)
+                        if history_method is not None:
+                            try:
                                 async for msg in history_method(
                                     limit=limit,
                                     oldest_first=False,
@@ -799,14 +826,15 @@ class OpenStrixApp:
                                     )
                                 messages.reverse()
                                 source = "discord_api"
-                        except Exception as exc:
-                            self.log_event(
-                                "list_messages_history_error",
-                                channel_id=target_channel_id,
-                                limit=limit,
-                                window=window,
-                                error=str(exc),
-                            )
+                            except Exception as exc:
+                                self.log_event(
+                                    "list_messages_history_error",
+                                    channel_id=target_channel_id,
+                                    limit=limit,
+                                    window=window,
+                                    error_type=type(exc).__name__,
+                                )
+                                raise ToolException("Failed to fetch Discord message history.") from exc
 
                 if not messages:
                     source = "memory"

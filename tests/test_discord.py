@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from langchain_core.tools import ToolException
 
 import open_strix.app as app_mod
 
@@ -498,6 +499,50 @@ async def test_list_messages_tool_rejects_invalid_window(
 
     result = await tools["list_messages"].ainvoke({"window": "yesterdayish"})
     assert "window must look like" in result
+
+
+@pytest.mark.asyncio
+async def test_list_messages_tool_raises_tool_error_when_channel_not_found(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeResponse:
+        status = 404
+        reason = "Not Found"
+
+    class FakeDiscordClient:
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int):
+            return None
+
+        async def fetch_channel(self, _: int):
+            raise app_mod.discord.NotFound(
+                FakeResponse(),
+                {"message": "Unknown Channel", "code": 10003},
+            )
+
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def capture_log(event_type: str, **payload: Any) -> None:
+        events.append((event_type, payload))
+
+    app.discord_client = FakeDiscordClient()  # type: ignore[assignment]
+    app.log_event = capture_log  # type: ignore[assignment]
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    with pytest.raises(ToolException, match="Channel 123 was not found"):
+        await tools["list_messages"].ainvoke({"channel_id": "123", "limit": 10, "window": "1d"})
+
+    compact = [payload for evt, payload in events if evt == "list_messages_channel_not_found"]
+    assert compact
+    assert compact[-1]["channel_id"] == "123"
+    assert compact[-1]["code"] == 10003
+    assert "error" not in compact[-1]
 
 
 @pytest.mark.asyncio
