@@ -20,15 +20,15 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 Official install docs (alternate methods like Homebrew, pipx, winget):
 - https://docs.astral.sh/uv/getting-started/installation/
 
-## Quick start
+## Quick start (recommended)
 
 ```bash
-uv init --python 3.11
-uv add open-strix
-uv run open-strix
+uvx open-strix setup --home my-agent --github
+cd my-agent
+uvx open-strix
 ```
 
-On first run, `open-strix` bootstraps the current directory with:
+`open-strix setup` bootstraps the target directory with:
 
 - `state/`
 - `skills/`
@@ -38,27 +38,46 @@ On first run, `open-strix` bootstraps the current directory with:
 - `scheduler.yaml`
 - `config.yaml`
 - `checkpoint.md`
+- `.env` (template)
 
-It connects to Discord if a token is present (by default `DISCORD_TOKEN`).
+Then `uvx open-strix` connects to Discord if a token is present (by default `DISCORD_TOKEN`).
 Otherwise it runs in local stdin mode.
+
+## Installed mode (optional)
+
+If you prefer a local project install instead of `uvx`:
+
+```bash
+uv init --python 3.11
+uv add open-strix
+uv run open-strix setup --home .
+uv run open-strix
+```
 
 ## Create a GitHub repo and set remote
 
 `open-strix` auto-syncs with git after each turn, so set up a repo + remote early.
 
-### Option A: GitHub CLI (`gh`)
+Recommended:
 
 ```bash
-git init
-git add .
-git commit -m "Initial commit"
-gh auth login
-gh repo create <repo-name> --private --source=. --remote=origin --push
+uvx open-strix setup --home my-agent --github
 ```
 
 Keep this private, since agent memory and logs can contain sensitive context.
 
-### Option B: GitHub web UI
+Manual fallback with GitHub CLI (`gh`):
+
+```bash
+cd my-agent
+gh auth login
+gh repo create <repo-name> --private --source=. --remote=origin
+git add .
+git commit -m "Initial commit"
+git push -u origin HEAD
+```
+
+Manual fallback with GitHub web UI:
 
 1. Create a new **private** empty repo on GitHub (no README, no `.gitignore`, no license).
 2. In your project directory:
