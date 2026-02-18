@@ -1,6 +1,6 @@
 [project]
 name = "open-strix"
-version = "0.1.2"
+version = "0.1.3"
 description = "Minimal autonomous agent harness with LangGraph Deep Agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 open-strix = "open_strix.cli:main"
+release = "open_strix.release:main"
 
 [build-system]
 requires = ["hatchling"]

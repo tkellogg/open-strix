@@ -27,6 +27,7 @@ from langchain_core.tools import tool
 UTC = timezone.utc
 LOG_ROLL_BYTES = 1_000_000
 DISCORD_MESSAGE_CHAR_LIMIT = 2000
+DISCORD_HISTORY_REFRESH_LIMIT = 50
 ERROR_REACTION_EMOJI = "❌"
 WARNING_REACTION_EMOJI = "⚠️"
 STATE_DIR_NAME = "state"
@@ -1039,6 +1040,10 @@ class OpenStrixApp:
         )
 
     async def handle_discord_message(self, message: discord.Message) -> None:
+        await self._refresh_channel_history_from_discord(
+            channel_id=str(message.channel.id),
+            before_message_id=str(message.id),
+        )
         attachment_names = await self._save_attachments(message)
         prompt = (message.content or "").strip()
         if not prompt:
@@ -1079,6 +1084,84 @@ class OpenStrixApp:
             ),
         )
 
+    async def _refresh_channel_history_from_discord(
+        self,
+        *,
+        channel_id: str,
+        before_message_id: str | None = None,
+    ) -> int:
+        if self.discord_client is None or not self.discord_client.is_ready():
+            return 0
+
+        try:
+            channel_int = int(channel_id)
+        except ValueError:
+            return 0
+
+        channel = self.discord_client.get_channel(channel_int)
+        if channel is None:
+            channel = await self.discord_client.fetch_channel(channel_int)
+
+        history_method = getattr(channel, "history", None)
+        if history_method is None:
+            return 0
+
+        limit = max(DISCORD_HISTORY_REFRESH_LIMIT, self.config.discord_messages_in_prompt * 3)
+        history_before: discord.Object | None = None
+        if before_message_id is not None:
+            try:
+                history_before = discord.Object(id=int(before_message_id))
+            except ValueError:
+                history_before = None
+
+        added = 0
+        try:
+            async for historic_message in history_method(
+                limit=limit,
+                oldest_first=True,
+                before=history_before,
+            ):
+                attachment_names = [
+                    str(Path(attachment.filename).name)
+                    for attachment in getattr(historic_message, "attachments", [])
+                ]
+                created_at = getattr(historic_message, "created_at", None)
+                created_at_iso: str | None = None
+                if isinstance(created_at, datetime):
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=UTC)
+                    created_at_iso = created_at.astimezone(UTC).isoformat()
+
+                remember_added = self._remember_message(
+                    channel_id=channel_id,
+                    author=str(getattr(historic_message, "author", "unknown")),
+                    content=str(getattr(historic_message, "content", "")),
+                    attachment_names=attachment_names,
+                    message_id=str(getattr(historic_message, "id", "")),
+                    is_bot=bool(getattr(getattr(historic_message, "author", None), "bot", False)),
+                    source="discord",
+                    timestamp=created_at_iso,
+                )
+                if remember_added:
+                    added += 1
+        except Exception as exc:
+            self.log_event(
+                "discord_history_refresh_error",
+                channel_id=channel_id,
+                before_message_id=before_message_id,
+                error=str(exc),
+            )
+            return 0
+
+        self.log_event(
+            "discord_history_refreshed",
+            channel_id=channel_id,
+            before_message_id=before_message_id,
+            limit=limit,
+            added=added,
+        )
+        return added
+
     async def _save_attachments(self, message: discord.Message) -> list[str]:
         if not message.attachments:
             return []
@@ -1102,11 +1185,18 @@ class OpenStrixApp:
         message_id: str | None = None,
         is_bot: bool = False,
         source: str = "discord",
-    ) -> None:
+        timestamp: str | None = None,
+    ) -> bool:
+        normalized_message_id = str(message_id).strip() if message_id not in (None, "") else None
+        if normalized_message_id is not None:
+            for existing in self.message_history_by_channel.get(channel_id, []):
+                if existing.get("message_id") == normalized_message_id:
+                    return False
+
         item = {
-            "timestamp": utc_now_iso(),
+            "timestamp": timestamp if timestamp is not None else utc_now_iso(),
             "channel_id": channel_id,
-            "message_id": message_id,
+            "message_id": normalized_message_id,
             "author": author,
             "is_bot": is_bot,
             "source": source,
@@ -1115,6 +1205,7 @@ class OpenStrixApp:
         }
         self.message_history_all.append(item)
         self.message_history_by_channel[channel_id].append(item)
+        return True
 
     def _latest_message_reference(
         self,

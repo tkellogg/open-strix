@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -136,6 +137,105 @@ async def test_handle_discord_message_queues_event_and_saves_attachments(
     assert queued.attachment_names
     attachment_path = tmp_path / queued.attachment_names[0]
     assert attachment_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_handle_discord_message_refreshes_prior_channel_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeAuthor:
+        def __init__(self, name: str, bot: bool = False, author_id: int = 0) -> None:
+            self.name = name
+            self.bot = bot
+            self.id = author_id
+
+        def __str__(self) -> str:
+            return self.name
+
+    class FakeHistoricMessage:
+        def __init__(self, message_id: int, content: str, author: FakeAuthor, created_at: datetime) -> None:
+            self.id = message_id
+            self.content = content
+            self.author = author
+            self.created_at = created_at
+            self.attachments: list[Any] = []
+
+    class FakeChannel:
+        def __init__(self, historic_messages: list[FakeHistoricMessage]) -> None:
+            self._historic_messages = historic_messages
+            self.last_before_id: int | None = None
+            self.last_limit: int | None = None
+
+        def history(
+            self,
+            *,
+            limit: int,
+            oldest_first: bool,
+            before: Any = None,
+        ):
+            self.last_limit = limit
+            before_id = int(getattr(before, "id", 0)) if before is not None else None
+            self.last_before_id = before_id
+
+            filtered = self._historic_messages
+            if before_id is not None:
+                filtered = [msg for msg in filtered if int(msg.id) < before_id]
+            filtered = filtered[-limit:]
+            ordered = filtered if oldest_first else list(reversed(filtered))
+
+            async def _iter():
+                for msg in ordered:
+                    yield msg
+
+            return _iter()
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    now = datetime.now(tz=timezone.utc)
+    historic_messages = [
+        FakeHistoricMessage(101, "older-1", FakeAuthor("alice", False, 1), now - timedelta(minutes=2)),
+        FakeHistoricMessage(102, "older-2", FakeAuthor("bob", True, 2), now - timedelta(minutes=1)),
+        FakeHistoricMessage(103, "current", FakeAuthor("carol", False, 3), now),
+    ]
+    channel = FakeChannel(historic_messages)
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+
+    incoming = SimpleNamespace(
+        id=103,
+        content="current",
+        channel=SimpleNamespace(id=999),
+        author=FakeAuthor("carol", False, 3),
+        attachments=[],
+    )
+
+    await app.handle_discord_message(incoming)
+
+    assert channel.last_before_id == 103
+    assert channel.last_limit == max(
+        app_mod.DISCORD_HISTORY_REFRESH_LIMIT,
+        app.config.discord_messages_in_prompt * 3,
+    )
+
+    remembered_ids = [
+        item.get("message_id")
+        for item in app.message_history_by_channel["999"]
+    ]
+    assert remembered_ids == ["101", "102", "103"]
 
 
 @pytest.mark.asyncio

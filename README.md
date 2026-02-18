@@ -24,6 +24,21 @@ On first run, it bootstraps the current directory with:
 If `DISCORD_TOKEN` is set (or whatever `config.yaml` points to), it connects to Discord.
 Otherwise it runs in local stdin mode.
 
+## Release
+
+```bash
+uv run release
+```
+
+Release command behavior:
+- uses `UV_PUBLISH_TOKEN` if already set
+- otherwise reads token from `~/.pypirc` (`[pypi] password`)
+- runs `uv build` then `uv publish`
+
+Useful flags:
+- `uv run release --dry-run`
+- `uv run release --no-build`
+
 ## Tests
 
 ```bash
