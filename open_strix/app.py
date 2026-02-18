@@ -26,6 +26,7 @@ from langchain_core.tools import tool
 
 UTC = timezone.utc
 LOG_ROLL_BYTES = 1_000_000
+DISCORD_MESSAGE_CHAR_LIMIT = 2000
 ERROR_REACTION_EMOJI = "❌"
 WARNING_REACTION_EMOJI = "⚠️"
 STATE_DIR_NAME = "state"
@@ -238,6 +239,14 @@ def _normalize_predictions(value: Any) -> list[str]:
     if bullet_values and len(bullet_values) == len(lines):
         return [line for line in bullet_values if line]
     return lines
+
+
+def _chunk_discord_message(text: str, limit: int = DISCORD_MESSAGE_CHAR_LIMIT) -> list[str]:
+    if limit <= 0:
+        limit = DISCORD_MESSAGE_CHAR_LIMIT
+    if len(text) <= limit:
+        return [text]
+    return [text[idx : idx + limit] for idx in range(0, len(text), limit)]
 
 
 def _model_for_deep_agents(model_name: str) -> str:
@@ -611,9 +620,11 @@ class OpenStrixApp:
         *,
         channel_id: str,
         text: str,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, str | None, int]:
+        chunks = _chunk_discord_message(text)
         sent = False
         sent_message_id: str | None = None
+        sent_chunks = 0
         if self.discord_client and self.discord_client.is_ready():
             try:
                 channel_int = int(channel_id)
@@ -624,26 +635,30 @@ class OpenStrixApp:
                 if channel is None:
                     channel = await self.discord_client.fetch_channel(channel_int)
                 if isinstance(channel, discord.abc.Messageable):
-                    sent_msg = await channel.send(text)
-                    sent_message_id = str(getattr(sent_msg, "id", "")) or None
-                    self._remember_message(
-                        channel_id=channel_id,
-                        author="open_strix",
-                        content=text,
-                        attachment_names=[],
-                        message_id=sent_message_id,
-                        is_bot=True,
-                        source="discord",
-                    )
-                    if self._current_turn_sent_messages is not None:
-                        self._current_turn_sent_messages.append(
-                            (channel_id, sent_message_id),
+                    for chunk in chunks:
+                        sent_msg = await channel.send(chunk)
+                        sent_message_id = str(getattr(sent_msg, "id", "")) or None
+                        self._remember_message(
+                            channel_id=channel_id,
+                            author="open_strix",
+                            content=chunk,
+                            attachment_names=[],
+                            message_id=sent_message_id,
+                            is_bot=True,
+                            source="discord",
                         )
-                    sent = True
+                        if self._current_turn_sent_messages is not None:
+                            self._current_turn_sent_messages.append(
+                                (channel_id, sent_message_id),
+                            )
+                        sent = True
+                        sent_chunks += 1
 
         if not sent:
-            print(f"[open-strix send_message channel={channel_id}] {text}")
-        return sent, sent_message_id
+            for chunk in chunks:
+                print(f"[open-strix send_message channel={channel_id}] {chunk}")
+            sent_chunks = len(chunks)
+        return sent, sent_message_id, sent_chunks
 
     def _build_tools(self) -> list[Any]:
         @tool("send_message")
@@ -653,7 +668,7 @@ class OpenStrixApp:
             if target_channel_id is None:
                 return "No channel_id provided and no current event channel is available."
 
-            sent, sent_message_id = await self._send_discord_message(
+            sent, sent_message_id, sent_chunks = await self._send_discord_message(
                 channel_id=target_channel_id,
                 text=text,
             )
@@ -663,12 +678,14 @@ class OpenStrixApp:
                 tool="send_message",
                 channel_id=target_channel_id,
                 sent=sent,
+                chunks=sent_chunks,
                 git_sync="deferred",
                 message_id=sent_message_id,
                 text_preview=text[:300],
             )
-            return "send_message complete (sent={sent}, git_sync=deferred)".format(
+            return "send_message complete (sent={sent}, chunks={chunks}, git_sync=deferred)".format(
                 sent=sent,
+                chunks=sent_chunks,
             )
 
         @tool("list_messages")
@@ -1442,9 +1459,9 @@ class OpenStrixApp:
             if event.force_reply and not (self._current_turn_sent_messages or []):
                 fallback_text = final_text.strip() if final_text.strip() else "Acknowledged."
                 if event.channel_id is None:
-                    sent, sent_message_id = False, None
+                    sent, sent_message_id, sent_chunks = False, None, 0
                 else:
-                    sent, sent_message_id = await self._send_discord_message(
+                    sent, sent_message_id, sent_chunks = await self._send_discord_message(
                         channel_id=event.channel_id,
                         text=fallback_text,
                     )
@@ -1455,6 +1472,7 @@ class OpenStrixApp:
                     source_id=event.source_id,
                     author_id=event.author_id,
                     sent=sent,
+                    chunks=sent_chunks,
                     message_id=sent_message_id,
                     used_final_text=bool(final_text.strip()),
                     text_preview=fallback_text[:300],

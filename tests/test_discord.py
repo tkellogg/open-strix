@@ -217,6 +217,57 @@ async def test_send_message_tool_sends_when_discord_client_ready(
 
 
 @pytest.mark.asyncio
+async def test_send_message_tool_chunks_long_messages_for_discord_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    app.config.git_sync_after_turn = False
+
+    class FakeMessageable:
+        pass
+
+    class FakeSentMessage:
+        def __init__(self, message_id: int) -> None:
+            self.id = message_id
+
+    class FakeChannel(FakeMessageable):
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, text: str) -> FakeSentMessage:
+            self.sent.append(text)
+            return FakeSentMessage(100 + len(self.sent))
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    monkeypatch.setattr(app_mod.discord.abc, "Messageable", FakeMessageable)
+
+    text = "x" * (app_mod.DISCORD_MESSAGE_CHAR_LIMIT * 2 + 123)
+    tools = {tool.name: tool for tool in app._build_tools()}
+    result = await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+
+    assert "sent=True" in result
+    assert "chunks=3" in result
+    assert len(channel.sent) == 3
+    assert [len(chunk) for chunk in channel.sent] == [2000, 2000, 123]
+
+
+@pytest.mark.asyncio
 async def test_react_tool_defaults_to_last_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
