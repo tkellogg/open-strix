@@ -15,6 +15,7 @@ import yaml
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
+from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import EditResult, FileUploadResponse, WriteResult
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
@@ -42,6 +43,7 @@ from .discord import (
 )
 from .models import AgentEvent
 from .prompts import DEFAULT_CHECKPOINT, SYSTEM_PROMPT, render_turn_prompt
+from .readonly_backend import BUILTIN_SKILLS_ROUTE, build_builtin_skills_backend
 from .scheduler import SchedulerJob, SchedulerMixin
 from .tools import ToolsMixin
 
@@ -231,9 +233,19 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.worker_task: asyncio.Task[Any] | None = None
         self._current_turn_sent_messages: list[tuple[str, str]] | None = None
 
-        backend = StateWriteGuardBackend(root_dir=self.home, state_dir=STATE_DIR_NAME)
+        mutable_backend = StateWriteGuardBackend(root_dir=self.home, state_dir=STATE_DIR_NAME)
+        builtin_backend = build_builtin_skills_backend()
+        backend = CompositeBackend(
+            default=mutable_backend,
+            routes={BUILTIN_SKILLS_ROUTE: builtin_backend},
+        )
         model = _model_for_deep_agents(self.config.model)
-        skills = ["/skills"] if self.layout.skills_dir.exists() else None
+        skills_sources: list[str] = []
+        if self.layout.skills_dir.exists():
+            skills_sources.append("/skills")
+        # Keep built-ins last so packaged defaults win on name collision.
+        skills_sources.append(BUILTIN_SKILLS_ROUTE.rstrip("/"))
+        skills = skills_sources or None
 
         self.agent = create_deep_agent(
             model=model,
@@ -355,9 +367,6 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         )
 
     async def _run_post_turn_git_sync(self, event: AgentEvent) -> str:
-        if not self.config.git_sync_after_turn:
-            return "disabled"
-
         git_result = await asyncio.to_thread(_git_sync, self.home)
         self.log_event(
             "git_sync_after_turn",

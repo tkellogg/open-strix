@@ -57,6 +57,7 @@ def test_default_model_is_minimax_even_if_config_model_is_null(
 
     assert app.config.model == "MiniMax-M2.5"
     assert captured["model"] == "anthropic:MiniMax-M2.5"
+    assert captured["skills"] == ["/skills", "/.open_strix_builtin_skills"]
     config_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
     assert "model: MiniMax-M2.5" in config_text
     assert "always_respond_bot_ids: []" in config_text
@@ -86,10 +87,10 @@ async def test_run_starts_discord_with_configured_token_env(
 ) -> None:
     _stub_agent_factory(monkeypatch)
     (tmp_path / "config.yaml").write_text(
-        "discord_token_env: DISCORD_CLIENT_SECRET\n",
+        "discord_token_env: OPEN_STRIX_DISCORD_TOKEN\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("DISCORD_CLIENT_SECRET", "fake-discord-token")
+    monkeypatch.setenv("OPEN_STRIX_DISCORD_TOKEN", "fake-discord-token")
 
     calls: dict[str, str] = {}
 
@@ -300,7 +301,6 @@ async def test_send_message_tool_sends_when_discord_client_ready(
 ) -> None:
     _stub_agent_factory(monkeypatch)
     app = app_mod.OpenStrixApp(tmp_path)
-    app.config.git_sync_after_turn = False
 
     class FakeMessageable:
         pass
@@ -356,7 +356,6 @@ async def test_send_message_tool_chunks_long_messages_for_discord_limit(
 ) -> None:
     _stub_agent_factory(monkeypatch)
     app = app_mod.OpenStrixApp(tmp_path)
-    app.config.git_sync_after_turn = False
 
     class FakeMessageable:
         pass
@@ -640,7 +639,6 @@ async def test_post_turn_git_sync_failure_reacts_to_own_message(
 ) -> None:
     _stub_agent_factory(monkeypatch)
     app = app_mod.OpenStrixApp(tmp_path)
-    app.config.git_sync_after_turn = True
 
     class FakeMessageable:
         pass
@@ -786,7 +784,6 @@ async def test_process_event_turn_enables_discord_typing_indicator(
 ) -> None:
     _stub_agent_factory(monkeypatch)
     app = app_mod.OpenStrixApp(tmp_path)
-    app.config.git_sync_after_turn = False
 
     class FakeTypingContext:
         def __init__(self, channel: "FakeChannel") -> None:
@@ -854,7 +851,6 @@ async def test_process_event_does_not_send_final_text_when_agent_skips_send_mess
 ) -> None:
     _stub_agent_factory(monkeypatch)
     app = app_mod.OpenStrixApp(tmp_path)
-    app.config.git_sync_after_turn = False
 
     class FakeMessageable:
         pass

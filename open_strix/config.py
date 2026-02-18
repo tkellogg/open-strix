@@ -16,7 +16,6 @@ journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
 always_respond_bot_ids: []
-git_sync_after_turn: true
 """
 
 DEFAULT_SCHEDULER = """\
@@ -91,23 +90,12 @@ class AppConfig:
     discord_messages_in_prompt: int = 10
     discord_token_env: str = "DISCORD_TOKEN"
     always_respond_bot_ids: set[str] = field(default_factory=set)
-    git_sync_after_turn: bool = True
 
 
 def _write_if_missing(path: Path, content: str) -> None:
     if path.exists():
         return
     path.write_text(content, encoding="utf-8")
-
-
-def _safe_bool(value: Any, default: bool = True) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
 
 
 def _normalize_id_list(value: Any) -> set[str]:
@@ -138,7 +126,6 @@ def load_config(layout: RepoLayout) -> AppConfig:
         discord_messages_in_prompt=int(loaded.get("discord_messages_in_prompt", 10)),
         discord_token_env=str(loaded.get("discord_token_env", "DISCORD_TOKEN")),
         always_respond_bot_ids=_normalize_id_list(loaded.get("always_respond_bot_ids")),
-        git_sync_after_turn=_safe_bool(loaded.get("git_sync_after_turn"), True),
     )
 
 
@@ -156,6 +143,10 @@ def _ensure_config_defaults(config_file: Path) -> None:
 
     if "always_respond_bot_ids" not in loaded:
         loaded["always_respond_bot_ids"] = []
+        changed = True
+
+    if "git_sync_after_turn" in loaded:
+        loaded.pop("git_sync_after_turn", None)
         changed = True
 
     if changed:

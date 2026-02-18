@@ -25,8 +25,6 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     env = os.environ.copy()
     # Force no-Discord path to verify first-run local onboarding behavior.
     env.pop("DISCORD_TOKEN", None)
-    env.pop("DISCORD_CLIENT_SECRET", None)
-    env.pop("DISCORD_CLIENT_ID", None)
 
     _run(["uv", "init", "--python", "3.11", "--no-readme"], cwd=home, env=env)
     _run(["uv", "add", "--editable", str(repo_root)], cwd=home, env=env)
@@ -67,6 +65,7 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     assert "default_reply_channel" not in config_text
     assert "state_dir" not in config_text
     assert "git_sync_before_send" not in config_text
+    assert "git_sync_after_turn" not in config_text
     assert "skills_sources" not in config_text
 
     # Second run should be idempotent and still work.
