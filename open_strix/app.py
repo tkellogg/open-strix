@@ -9,7 +9,7 @@ import subprocess
 import textwrap
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -84,6 +84,7 @@ Communication:
 - ALWAYS use the `send_message` tool to communicate with your human! Your final response will be discarded, they can't see it!
 - Reactions are a great way to acknowledge a message.
 - Pay attention to your user's communication preferences. It's totally find to send a message, do some work, and then send another message, if that's what the moment warrants.
+- If something feels perplexing, search for the context! The list_messages tool is a good place to start, or search your state files.
 
 Memory:
 - Memory blocks define who you are and your operational parameters. They're highly visible to you.
@@ -240,6 +241,33 @@ def _normalize_predictions(value: Any) -> list[str]:
     if bullet_values and len(bullet_values) == len(lines):
         return [line for line in bullet_values if line]
     return lines
+
+
+def _parse_time_window(value: str | None) -> timedelta | None:
+    if value is None:
+        return None
+    raw = value.strip().lower()
+    if not raw:
+        return None
+
+    match = re.fullmatch(
+        r"(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)",
+        raw,
+    )
+    if not match:
+        raise ValueError("window must look like '1h', '30m', '1d', or '1w'.")
+
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if unit in {"s", "sec", "secs", "second", "seconds"}:
+        return timedelta(seconds=amount)
+    if unit in {"m", "min", "mins", "minute", "minutes"}:
+        return timedelta(minutes=amount)
+    if unit in {"h", "hr", "hrs", "hour", "hours"}:
+        return timedelta(hours=amount)
+    if unit in {"d", "day", "days"}:
+        return timedelta(days=amount)
+    return timedelta(weeks=amount)
 
 
 def _chunk_discord_message(text: str, limit: int = DISCORD_MESSAGE_CHAR_LIMIT) -> list[str]:
@@ -690,18 +718,102 @@ class OpenStrixApp:
             )
 
         @tool("list_messages")
-        def list_messages(channel_id: str | None = None, limit: int = 10) -> str:
-            """List recent messages for a channel. Defaults to the current event channel."""
+        async def list_messages(
+            channel_id: str | None = None,
+            limit: int = 10,
+            window: str | None = None,
+        ) -> str:
+            """List recent messages by count and optional time window (`1h`, `1d`, etc.)."""
             if limit <= 0:
                 limit = 1
-            if limit > 100:
-                limit = 100
+            if limit > 200:
+                limit = 200
 
+            try:
+                window_delta = _parse_time_window(window)
+            except ValueError as exc:
+                return str(exc)
+            cutoff = datetime.now(tz=UTC) - window_delta if window_delta else None
             target_channel_id = channel_id or self.current_channel_id
-            if target_channel_id:
-                messages = list(self.message_history_by_channel.get(target_channel_id, []))[-limit:]
+            source = "memory"
+            messages: list[dict[str, Any]] = []
+
+            def _filter_by_cutoff(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                if cutoff is None:
+                    return rows
+                filtered: list[dict[str, Any]] = []
+                for row in rows:
+                    raw = str(row.get("timestamp", "")).strip()
+                    if not raw:
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=UTC)
+                    else:
+                        ts = ts.astimezone(UTC)
+                    if ts >= cutoff:
+                        filtered.append(row)
+                return filtered
+
+            if target_channel_id is None:
+                messages = _filter_by_cutoff(list(self.message_history_all))[-limit:]
+                source = "memory_all"
             else:
-                messages = list(self.message_history_all)[-limit:]
+                if self.discord_client and self.discord_client.is_ready():
+                    try:
+                        channel_int = int(target_channel_id)
+                    except ValueError:
+                        channel_int = -1
+                    if channel_int > 0:
+                        try:
+                            channel = self.discord_client.get_channel(channel_int)
+                            if channel is None:
+                                channel = await self.discord_client.fetch_channel(channel_int)
+                            history_method = getattr(channel, "history", None)
+                            if history_method is not None:
+                                async for msg in history_method(
+                                    limit=limit,
+                                    oldest_first=False,
+                                    after=cutoff,
+                                ):
+                                    created_at = getattr(msg, "created_at", None)
+                                    if isinstance(created_at, datetime):
+                                        if created_at.tzinfo is None:
+                                            created_at = created_at.replace(tzinfo=UTC)
+                                        timestamp = created_at.astimezone(UTC).isoformat()
+                                    else:
+                                        timestamp = utc_now_iso()
+                                    messages.append(
+                                        {
+                                            "timestamp": timestamp,
+                                            "channel_id": str(
+                                                getattr(getattr(msg, "channel", None), "id", target_channel_id),
+                                            ),
+                                            "message_id": str(getattr(msg, "id", "")),
+                                            "author": str(getattr(msg, "author", "unknown")),
+                                            "content": str(getattr(msg, "content", "")),
+                                        },
+                                    )
+                                messages.reverse()
+                                source = "discord_api"
+                        except Exception as exc:
+                            self.log_event(
+                                "list_messages_history_error",
+                                channel_id=target_channel_id,
+                                limit=limit,
+                                window=window,
+                                error=str(exc),
+                            )
+
+                if not messages:
+                    source = "memory"
+                    messages = _filter_by_cutoff(
+                        list(self.message_history_by_channel.get(target_channel_id, [])),
+                    )[-limit:]
+
             if not messages:
                 return "No messages found."
 
@@ -715,6 +827,8 @@ class OpenStrixApp:
                 tool="list_messages",
                 channel_id=target_channel_id,
                 limit=limit,
+                window=window,
+                source=source,
                 returned=len(rendered),
             )
             return "\n".join(rendered)

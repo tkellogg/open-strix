@@ -368,6 +368,139 @@ async def test_send_message_tool_chunks_long_messages_for_discord_limit(
 
 
 @pytest.mark.asyncio
+async def test_list_messages_tool_uses_discord_history_with_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeAuthor:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __str__(self) -> str:
+            return self.name
+
+    class FakeMessage:
+        def __init__(self, message_id: int, content: str, created_at: datetime, channel_id: int) -> None:
+            self.id = message_id
+            self.content = content
+            self.created_at = created_at
+            self.author = FakeAuthor(f"user-{message_id}")
+            self.channel = SimpleNamespace(id=channel_id)
+
+    class FakeChannel:
+        def __init__(self, messages: list[FakeMessage]) -> None:
+            self.messages = messages
+            self.last_limit: int | None = None
+            self.last_oldest_first: bool | None = None
+            self.last_after: datetime | None = None
+
+        def history(self, *, limit: int, oldest_first: bool, after: datetime | None = None):
+            self.last_limit = limit
+            self.last_oldest_first = oldest_first
+            self.last_after = after
+
+            rows = self.messages
+            if after is not None:
+                rows = [row for row in rows if row.created_at > after]
+            rows = rows[-limit:]
+            ordered = rows if oldest_first else list(reversed(rows))
+
+            async def _iter():
+                for row in ordered:
+                    yield row
+
+            return _iter()
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    now = datetime.now(tz=timezone.utc)
+    channel = FakeChannel(
+        [
+            FakeMessage(1, "very old", now - timedelta(hours=3), 123),
+            FakeMessage(2, "still old", now - timedelta(hours=2), 123),
+            FakeMessage(3, "recent-1", now - timedelta(minutes=30), 123),
+            FakeMessage(4, "recent-2", now - timedelta(minutes=5), 123),
+        ],
+    )
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+
+    tools = {tool.name: tool for tool in app._build_tools()}
+    result = await tools["list_messages"].ainvoke(
+        {"channel_id": "123", "limit": 10, "window": "1h"},
+    )
+
+    assert "recent-1" in result
+    assert "recent-2" in result
+    assert "very old" not in result
+    assert "still old" not in result
+    assert channel.last_limit == 10
+    assert channel.last_oldest_first is False
+    assert channel.last_after is not None
+
+
+@pytest.mark.asyncio
+async def test_list_messages_tool_memory_fallback_and_window_filter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    now = datetime.now(tz=timezone.utc)
+
+    app._remember_message(
+        channel_id="123",
+        message_id="1",
+        author="alice",
+        content="old-memory",
+        attachment_names=[],
+        timestamp=(now - timedelta(hours=2)).isoformat(),
+    )
+    app._remember_message(
+        channel_id="123",
+        message_id="2",
+        author="alice",
+        content="recent-memory",
+        attachment_names=[],
+        timestamp=(now - timedelta(minutes=10)).isoformat(),
+    )
+
+    tools = {tool.name: tool for tool in app._build_tools()}
+    result = await tools["list_messages"].ainvoke(
+        {"channel_id": "123", "limit": 10, "window": "1h"},
+    )
+
+    assert "recent-memory" in result
+    assert "old-memory" not in result
+
+
+@pytest.mark.asyncio
+async def test_list_messages_tool_rejects_invalid_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    result = await tools["list_messages"].ainvoke({"window": "yesterdayish"})
+    assert "window must look like" in result
+
+
+@pytest.mark.asyncio
 async def test_react_tool_defaults_to_last_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
