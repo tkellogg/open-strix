@@ -54,13 +54,8 @@ def _run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _is_git_worktree(home: Path) -> bool:
-    if shutil.which("git") is None:
-        return False
-    proc = _run_command(["git", "rev-parse", "--is-inside-work-tree"], cwd=home)
-    if proc.returncode != 0:
-        return False
-    return proc.stdout.strip().lower() == "true"
+def _has_local_git_repo(home: Path) -> bool:
+    return (home / ".git").exists()
 
 
 def _ensure_git_repo(home: Path) -> None:
@@ -245,10 +240,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_home = getattr(args, "home", None)
         candidate_home = run_home.resolve() if isinstance(run_home, Path) else Path.cwd().resolve()
 
-        auto_setup_needed = not _is_git_worktree(candidate_home)
+        auto_setup_needed = not _has_local_git_repo(candidate_home)
         if auto_setup_needed:
             print(
-                f"No git repo detected at {candidate_home}; running setup automatically.",
+                f"No local git repo detected at {candidate_home}; running setup automatically.",
                 flush=True,
             )
             try:

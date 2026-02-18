@@ -14,7 +14,7 @@ def test_cli_no_args_runs_open_strix(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run_open_strix(home: Path | None = None) -> None:
         called["home"] = home
 
-    monkeypatch.setattr(cli_mod, "_is_git_worktree", lambda _: True)
+    monkeypatch.setattr(cli_mod, "_has_local_git_repo", lambda _: True)
     monkeypatch.setattr(cli_mod, "run_open_strix", fake_run_open_strix)
     cli_mod.main([])
 
@@ -28,7 +28,7 @@ def test_cli_no_args_auto_setup_when_not_git(
     called: dict[str, object] = {}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli_mod, "_is_git_worktree", lambda _: False)
+    monkeypatch.setattr(cli_mod, "_has_local_git_repo", lambda _: False)
 
     def fake_setup(home: Path, *, github: bool = False, repo_name: str | None = None) -> None:
         called["setup_home"] = home
