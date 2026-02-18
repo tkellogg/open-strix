@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from langchain_core.tools import ToolException
 
 import open_strix.app as app_mod
 
@@ -20,6 +19,25 @@ class DummyAgent:
 
 def _stub_agent_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_mod, "create_deep_agent", lambda **_: DummyAgent())
+
+
+def test_chunk_discord_message_prefers_paragraph_boundaries() -> None:
+    p1 = "a" * 1500
+    p2 = "b" * 1500
+    text = f"{p1}\n\n{p2}"
+
+    chunks = app_mod._chunk_discord_message(text, limit=2000)
+
+    assert chunks == [f"{p1}\n\n", p2]
+    assert "".join(chunks) == text
+
+
+def test_chunk_discord_message_falls_back_to_hard_split_for_long_paragraph() -> None:
+    text = "x" * 2500
+    chunks = app_mod._chunk_discord_message(text, limit=2000)
+
+    assert [len(chunk) for chunk in chunks] == [2000, 500]
+    assert "".join(chunks) == text
 
 
 def test_default_model_is_minimax_even_if_config_model_is_null(
@@ -240,7 +258,7 @@ async def test_handle_discord_message_refreshes_prior_channel_history(
 
 
 @pytest.mark.asyncio
-async def test_handle_discord_message_from_allowlisted_bot_sets_force_reply(
+async def test_handle_discord_message_from_allowlisted_bot_is_processed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -270,7 +288,8 @@ async def test_handle_discord_message_from_allowlisted_bot_sets_force_reply(
     await app.handle_discord_message(message)
 
     queued = app.queue.get_nowait()
-    assert queued.force_reply is True
+    assert queued.event_type == "discord_message"
+    assert queued.channel_id == "999"
     assert queued.author_id == "42"
 
 
@@ -315,6 +334,19 @@ async def test_send_message_tool_sends_when_discord_client_ready(
 
     assert "sent=True" in result
     assert channel.sent == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_tool_returns_tool_error_on_empty_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    result = await tools["send_message"].ainvoke({"text": "   ", "channel_id": "123"})
+    assert "message text was empty" in result
 
 
 @pytest.mark.asyncio
@@ -535,8 +567,8 @@ async def test_list_messages_tool_raises_tool_error_when_channel_not_found(
     app.log_event = capture_log  # type: ignore[assignment]
     tools = {tool.name: tool for tool in app._build_tools()}
 
-    with pytest.raises(ToolException, match="Channel 123 was not found"):
-        await tools["list_messages"].ainvoke({"channel_id": "123", "limit": 10, "window": "1d"})
+    result = await tools["list_messages"].ainvoke({"channel_id": "123", "limit": 10, "window": "1d"})
+    assert "Channel 123 was not found" in result
 
     compact = [payload for evt, payload in events if evt == "list_messages_channel_not_found"]
     assert compact
@@ -816,7 +848,7 @@ async def test_process_event_turn_enables_discord_typing_indicator(
 
 
 @pytest.mark.asyncio
-async def test_force_reply_event_sends_message_when_agent_did_not_use_send_message(
+async def test_process_event_does_not_send_final_text_when_agent_skips_send_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -879,8 +911,7 @@ async def test_force_reply_event_sends_message_when_agent_did_not_use_send_messa
             author="other-bot",
             author_id="42",
             source_id="777",
-            force_reply=True,
         ),
     )
 
-    assert channel.sent == ["Acknowledged."]
+    assert channel.sent == []

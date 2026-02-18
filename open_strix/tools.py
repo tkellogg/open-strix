@@ -1,0 +1,440 @@
+from __future__ import annotations
+
+import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import discord
+import yaml
+from langchain_core.tools import ToolException, tool
+
+from .scheduler import SchedulerJob
+
+UTC = timezone.utc
+
+
+def _parse_time_window(value: str | None) -> timedelta | None:
+    if value is None:
+        return None
+    raw = value.strip().lower()
+    if not raw:
+        return None
+
+    match = re.fullmatch(
+        r"(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)",
+        raw,
+    )
+    if not match:
+        raise ValueError("window must look like '1h', '30m', '1d', or '1w'.")
+
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if unit in {"s", "sec", "secs", "second", "seconds"}:
+        return timedelta(seconds=amount)
+    if unit in {"m", "min", "mins", "minute", "minutes"}:
+        return timedelta(minutes=amount)
+    if unit in {"h", "hr", "hrs", "hour", "hours"}:
+        return timedelta(hours=amount)
+    if unit in {"d", "day", "days"}:
+        return timedelta(days=amount)
+    return timedelta(weeks=amount)
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "block"
+
+
+class ToolsMixin:
+    def _build_tools(self) -> list[Any]:
+        @tool("send_message")
+        async def send_message(text: str, channel_id: str | None = None) -> str:
+            """Send a Discord message to a channel. Defaults to the current event channel."""
+            if not text.strip():
+                self.log_event(
+                    "tool_call_error",
+                    tool="send_message",
+                    error_type="empty_message",
+                )
+                raise ToolException(
+                    "send_message failed: message text was empty. Provide non-empty text.",
+                )
+
+            target_channel_id = channel_id or self.current_channel_id
+            if target_channel_id is None:
+                return "No channel_id provided and no current event channel is available."
+
+            sent, sent_message_id, sent_chunks = await self._send_discord_message(
+                channel_id=target_channel_id,
+                text=text,
+            )
+
+            self.log_event(
+                "tool_call",
+                tool="send_message",
+                channel_id=target_channel_id,
+                sent=sent,
+                chunks=sent_chunks,
+                git_sync="deferred",
+                message_id=sent_message_id,
+                text_preview=text[:300],
+            )
+            return "send_message complete (sent={sent}, chunks={chunks}, git_sync=deferred)".format(
+                sent=sent,
+                chunks=sent_chunks,
+            )
+
+        @tool("list_messages")
+        async def list_messages(
+            channel_id: str | None = None,
+            limit: int = 10,
+            window: str | None = None,
+        ) -> str:
+            """List recent messages by count and optional time window (`1h`, `1d`, etc.)."""
+            if limit <= 0:
+                limit = 1
+            if limit > 200:
+                limit = 200
+
+            try:
+                window_delta = _parse_time_window(window)
+            except ValueError as exc:
+                return str(exc)
+            cutoff = datetime.now(tz=UTC) - window_delta if window_delta else None
+            target_channel_id = channel_id or self.current_channel_id
+            source = "memory"
+            messages: list[dict[str, Any]] = []
+
+            def _filter_by_cutoff(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                if cutoff is None:
+                    return rows
+                filtered: list[dict[str, Any]] = []
+                for row in rows:
+                    raw = str(row.get("timestamp", "")).strip()
+                    if not raw:
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=UTC)
+                    else:
+                        ts = ts.astimezone(UTC)
+                    if ts >= cutoff:
+                        filtered.append(row)
+                return filtered
+
+            if target_channel_id is None:
+                messages = _filter_by_cutoff(list(self.message_history_all))[-limit:]
+                source = "memory_all"
+            else:
+                if self.discord_client and self.discord_client.is_ready():
+                    try:
+                        channel_int = int(target_channel_id)
+                    except ValueError:
+                        channel_int = -1
+                    if channel_int > 0:
+                        try:
+                            channel = self.discord_client.get_channel(channel_int)
+                            if channel is None:
+                                channel = await self.discord_client.fetch_channel(channel_int)
+                        except discord.NotFound as exc:
+                            self.log_event(
+                                "list_messages_channel_not_found",
+                                channel_id=target_channel_id,
+                                code=getattr(exc, "code", None),
+                            )
+                            raise ToolException(
+                                f"Channel {target_channel_id} was not found. Use a valid channel_id or omit it to use the current channel.",
+                            ) from exc
+                        except discord.Forbidden as exc:
+                            self.log_event(
+                                "list_messages_channel_forbidden",
+                                channel_id=target_channel_id,
+                                code=getattr(exc, "code", None),
+                            )
+                            raise ToolException(
+                                f"Cannot access channel {target_channel_id}. Check bot permissions.",
+                            ) from exc
+                        except Exception as exc:
+                            self.log_event(
+                                "list_messages_channel_lookup_error",
+                                channel_id=target_channel_id,
+                                error_type=type(exc).__name__,
+                            )
+                            raise ToolException("Failed to look up the Discord channel.") from exc
+
+                        history_method = getattr(channel, "history", None)
+                        if history_method is not None:
+                            try:
+                                async for msg in history_method(
+                                    limit=limit,
+                                    oldest_first=False,
+                                    after=cutoff,
+                                ):
+                                    created_at = getattr(msg, "created_at", None)
+                                    if isinstance(created_at, datetime):
+                                        if created_at.tzinfo is None:
+                                            created_at = created_at.replace(tzinfo=UTC)
+                                        timestamp = created_at.astimezone(UTC).isoformat()
+                                    else:
+                                        timestamp = datetime.now(tz=UTC).isoformat()
+                                    messages.append(
+                                        {
+                                            "timestamp": timestamp,
+                                            "channel_id": str(
+                                                getattr(getattr(msg, "channel", None), "id", target_channel_id),
+                                            ),
+                                            "message_id": str(getattr(msg, "id", "")),
+                                            "author": str(getattr(msg, "author", "unknown")),
+                                            "content": str(getattr(msg, "content", "")),
+                                        },
+                                    )
+                                messages.reverse()
+                                source = "discord_api"
+                            except Exception as exc:
+                                self.log_event(
+                                    "list_messages_history_error",
+                                    channel_id=target_channel_id,
+                                    limit=limit,
+                                    window=window,
+                                    error_type=type(exc).__name__,
+                                )
+                                raise ToolException("Failed to fetch Discord message history.") from exc
+
+                if not messages:
+                    source = "memory"
+                    messages = _filter_by_cutoff(
+                        list(self.message_history_by_channel.get(target_channel_id, [])),
+                    )[-limit:]
+
+            if not messages:
+                return "No messages found."
+
+            rendered: list[str] = []
+            for msg in messages:
+                rendered.append(
+                    f"[{msg['timestamp']}] channel={msg['channel_id']} message_id={msg.get('message_id')} author={msg['author']} content={msg['content']}",
+                )
+            self.log_event(
+                "tool_call",
+                tool="list_messages",
+                channel_id=target_channel_id,
+                limit=limit,
+                window=window,
+                source=source,
+                returned=len(rendered),
+            )
+            return "\n".join(rendered)
+
+        @tool("journal")
+        def journal(user_wanted: str, agent_did: str, predictions: str) -> str:
+            """Write a journal entry and return checkpoint guidance."""
+            self.append_journal(
+                user_wanted=user_wanted,
+                agent_did=agent_did,
+                predictions=predictions,
+                channel_id=self.current_channel_id,
+            )
+            checkpoint = self.layout.checkpoint_file.read_text(encoding="utf-8")
+            self.log_event("tool_call", tool="journal")
+            return checkpoint
+
+        @tool("react")
+        async def react(
+            emoji: str,
+            message_id: str | None = None,
+            channel_id: str | None = None,
+        ) -> str:
+            """React to a Discord message. Defaults to the latest known message."""
+            if not emoji.strip():
+                return "emoji is required."
+            if self.discord_client is None or not self.discord_client.is_ready():
+                return "Discord is not connected."
+
+            target_channel_id = channel_id or self.current_channel_id
+            target_message_id = message_id
+            if target_message_id is None:
+                target_message_id, inferred_channel_id = self._latest_message_reference(target_channel_id)
+                if target_channel_id is None:
+                    target_channel_id = inferred_channel_id
+
+            if target_message_id is None:
+                return "No message found to react to."
+            if target_channel_id is None:
+                return "No channel_id provided and no channel could be inferred."
+
+            try:
+                channel_int = int(target_channel_id)
+                message_int = int(target_message_id)
+            except ValueError:
+                return "channel_id and message_id must be numeric Discord IDs."
+
+            channel = self.discord_client.get_channel(channel_int)
+            if channel is None:
+                channel = await self.discord_client.fetch_channel(channel_int)
+            if not hasattr(channel, "fetch_message"):
+                return f"Channel {target_channel_id} does not support fetch_message."
+
+            message = await channel.fetch_message(message_int)
+            await message.add_reaction(emoji)
+            self.log_event(
+                "tool_call",
+                tool="react",
+                emoji=emoji,
+                channel_id=target_channel_id,
+                message_id=str(target_message_id),
+            )
+            return f"Reacted to message {target_message_id} in channel {target_channel_id}."
+
+        @tool("list_memory_blocks")
+        def list_memory_blocks() -> str:
+            """List memory blocks. Includes only the first 10 chars of text."""
+            blocks = self._load_memory_blocks()
+            payload = {
+                "blocks": [
+                    {
+                        "id": block["id"],
+                        "name": block["name"],
+                        "sort_order": block["sort_order"],
+                        "text_preview": str(block["text"])[:10],
+                    }
+                    for block in blocks
+                ],
+            }
+            self.log_event("tool_call", tool="list_memory_blocks", count=len(payload["blocks"]))
+            return yaml.safe_dump(payload, sort_keys=False)
+
+        @tool("create_memory_block")
+        def create_memory_block(
+            name: str,
+            text: str,
+            sort_order: int = 0,
+            block_id: str | None = None,
+        ) -> str:
+            """Create a memory block file in blocks/."""
+            normalized_name = name.strip()
+            if not normalized_name:
+                return "name is required."
+            chosen_id = _slugify(block_id) if block_id else self._generate_block_id(normalized_name)
+            if self._find_memory_block_path(chosen_id) is not None:
+                return f"memory block '{chosen_id}' already exists."
+
+            block = {
+                "name": normalized_name,
+                "sort_order": int(sort_order),
+                "text": text,
+            }
+            target = self._memory_block_path(chosen_id)
+            target.write_text(yaml.safe_dump(block, sort_keys=False), encoding="utf-8")
+            self.log_event("tool_call", tool="create_memory_block", block_id=chosen_id)
+            return f"Created memory block '{chosen_id}'."
+
+        @tool("update_memory_block")
+        def update_memory_block(
+            block_id: str,
+            name: str | None = None,
+            text: str | None = None,
+            sort_order: int | None = None,
+        ) -> str:
+            """Update an existing memory block in blocks/."""
+            normalized_id = _slugify(block_id)
+            path = self._find_memory_block_path(normalized_id)
+            if path is None:
+                return f"memory block '{normalized_id}' not found."
+
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                loaded = {}
+
+            changed = False
+            if name is not None:
+                loaded["name"] = name.strip()
+                changed = True
+            if text is not None:
+                loaded["text"] = text
+                changed = True
+            if sort_order is not None:
+                loaded["sort_order"] = int(sort_order)
+                changed = True
+
+            if not changed:
+                return "No fields provided. Pass at least one of name, text, sort_order."
+
+            path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+            self.log_event("tool_call", tool="update_memory_block", block_id=normalized_id)
+            return f"Updated memory block '{normalized_id}'."
+
+        @tool("delete_memory_block")
+        def delete_memory_block(block_id: str) -> str:
+            """Delete a memory block from blocks/."""
+            normalized_id = _slugify(block_id)
+            path = self._find_memory_block_path(normalized_id)
+            if path is None:
+                return f"memory block '{normalized_id}' not found."
+            path.unlink()
+            self.log_event("tool_call", tool="delete_memory_block", block_id=normalized_id)
+            return f"Deleted memory block '{normalized_id}'."
+
+        @tool("list_schedules")
+        def list_schedules() -> str:
+            """List scheduler jobs from scheduler.yaml."""
+            jobs = [job.to_dict() for job in self._load_scheduler_jobs()]
+            self.log_event("tool_call", tool="list_schedules", count=len(jobs))
+            return yaml.safe_dump({"jobs": jobs}, sort_keys=False)
+
+        @tool("add_schedule")
+        def add_schedule(
+            name: str,
+            prompt: str,
+            cron: str | None = None,
+            time_of_day: str | None = None,
+            channel_id: str | None = None,
+        ) -> str:
+            """Add or replace a scheduler job using either cron or time_of_day (HH:MM UTC)."""
+            if bool(cron) == bool(time_of_day):
+                return "Exactly one of cron or time_of_day must be provided."
+
+            jobs = [job for job in self._load_scheduler_jobs() if job.name != name]
+            jobs.append(
+                SchedulerJob(
+                    name=name.strip(),
+                    prompt=prompt.strip(),
+                    cron=cron.strip() if cron else None,
+                    time_of_day=time_of_day.strip() if time_of_day else None,
+                    channel_id=channel_id.strip() if channel_id else None,
+                ),
+            )
+            self._save_scheduler_jobs(jobs)
+            self._reload_scheduler_jobs()
+            self.log_event("tool_call", tool="add_schedule", name=name)
+            return f"Added schedule '{name}'."
+
+        @tool("remove_schedule")
+        def remove_schedule(name: str) -> str:
+            """Remove a scheduler job by name."""
+            before = self._load_scheduler_jobs()
+            after = [job for job in before if job.name != name]
+            self._save_scheduler_jobs(after)
+            self._reload_scheduler_jobs()
+            self.log_event("tool_call", tool="remove_schedule", name=name, removed=len(before) - len(after))
+            return f"Removed {len(before) - len(after)} schedule(s) named '{name}'."
+
+        send_message.handle_tool_error = True
+        list_messages.handle_tool_error = True
+
+        return [
+            send_message,
+            react,
+            list_messages,
+            journal,
+            list_memory_blocks,
+            create_memory_block,
+            update_memory_block,
+            delete_memory_block,
+            list_schedules,
+            add_schedule,
+            remove_schedule,
+        ]
