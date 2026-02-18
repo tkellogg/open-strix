@@ -28,6 +28,8 @@ cd my-agent
 uvx open-strix
 ```
 
+If you run `uvx open-strix` in a plain directory with no git repo, it now auto-runs setup first.
+
 `open-strix setup` bootstraps the target directory with:
 
 - `state/`
@@ -39,6 +41,12 @@ uvx open-strix
 - `config.yaml`
 - `checkpoint.md`
 - `.env` (template)
+
+It also prints a CLI walkthrough with links and step-by-step setup for:
+- MiniMax M2.5
+- Kimi/Moonshot
+- Discord bot creation + permissions
+- `config.yaml` values
 
 Then `uvx open-strix` connects to Discord if a token is present (by default `DISCORD_TOKEN`).
 Otherwise it runs in local stdin mode.
@@ -53,6 +61,36 @@ uv add open-strix
 uv run open-strix setup --home .
 uv run open-strix
 ```
+
+## Install and auth `gh` (GitHub CLI)
+
+If you want `open-strix setup --github`, install and log into `gh` first.
+
+Install:
+
+```bash
+# macOS (Homebrew)
+brew install gh
+
+# Ubuntu / Debian
+sudo apt install gh
+```
+
+```powershell
+# Windows (winget)
+winget install --id GitHub.cli
+```
+
+Authenticate:
+
+```bash
+gh auth login
+gh auth status
+```
+
+Official docs:
+- https://cli.github.com/
+- https://github.com/cli/cli#installation
 
 ## Create a GitHub repo and set remote
 
