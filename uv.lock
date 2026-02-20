@@ -1096,7 +1096,7 @@ wheels = [
 
 [[package]]
 name = "open-strix"
-version = "0.1.8"
+version = "0.1.9"
 source = { editable = "." }
 dependencies = [
     { name = "apscheduler" },
