@@ -4,7 +4,9 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -228,6 +230,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.message_history_by_channel: dict[str, deque[dict[str, Any]]] = defaultdict(
             lambda: deque(maxlen=250),
         )
+        # Session-scoped cache for fetched web content; cleaned up on shutdown.
+        self.fetch_cache_dir = Path(tempfile.mkdtemp(prefix="fetch-cache-", dir=self.layout.logs_dir))
 
         self.discord_client: DiscordBridge | None = None
         self.worker_task: asyncio.Task[Any] | None = None
@@ -574,6 +578,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
                 await self.worker_task
             except asyncio.CancelledError:
                 pass
+        if self.fetch_cache_dir.exists():
+            shutil.rmtree(self.fetch_cache_dir, ignore_errors=True)
         self.log_event("app_shutdown_complete")
 
 

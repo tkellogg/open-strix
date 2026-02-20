@@ -3,11 +3,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 import open_strix.app as app_mod
 
@@ -574,6 +578,83 @@ async def test_list_messages_tool_raises_tool_error_when_channel_not_found(
     assert compact[-1]["channel_id"] == "123"
     assert compact[-1]["code"] == 10003
     assert "error" not in compact[-1]
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_tool_downloads_into_session_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    body = b"alpha\nbeta\n"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: Any) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        tools = {tool.name: tool for tool in app._build_tools()}
+        result = await tools["fetch_url"].ainvoke(
+            {"url": f"http://127.0.0.1:{server.server_port}/notes.txt"},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+    payload = yaml.safe_load(result)
+    assert payload["status"] == 200
+    assert payload["bytes"] == len(body)
+
+    body_path = tmp_path / payload["file_path"].lstrip("/")
+    assert body_path.exists()
+    assert body_path.read_bytes() == body
+
+    metadata_path = tmp_path / payload["metadata_path"].lstrip("/")
+    assert metadata_path.exists()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["file_path"] == payload["file_path"]
+    assert metadata["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_tool_rejects_non_http_scheme(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    result = await tools["fetch_url"].ainvoke({"url": "ftp://example.com/file.txt"})
+    assert "Only http:// and https:// URLs are supported." in result
+
+
+@pytest.mark.asyncio
+async def test_shutdown_removes_fetch_cache_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    cache_dir = app.fetch_cache_dir
+    assert cache_dir.exists()
+    (cache_dir / "temp.txt").write_text("staged", encoding="utf-8")
+    await app.shutdown()
+    assert not cache_dir.exists()
 
 
 @pytest.mark.asyncio

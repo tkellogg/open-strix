@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 
 import discord
 import yaml
@@ -12,6 +18,7 @@ from langchain_core.tools import ToolException, tool
 from .scheduler import SchedulerJob
 
 UTC = timezone.utc
+FETCH_CHUNK_SIZE_BYTES = 64 * 1024
 
 
 def _parse_time_window(value: str | None) -> timedelta | None:
@@ -44,6 +51,76 @@ def _parse_time_window(value: str | None) -> timedelta | None:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug or "block"
+
+
+def _virtual_path(path: Path, *, root: Path) -> str:
+    return "/" + path.relative_to(root).as_posix()
+
+
+def _sanitize_download_name(value: str) -> str:
+    # Keep names shell-safe and grep-friendly.
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-.")
+    if not cleaned:
+        return "download.bin"
+    if len(cleaned) <= 120:
+        return cleaned
+
+    suffix = Path(cleaned).suffix
+    stem = Path(cleaned).stem[: max(1, 120 - len(suffix))]
+    return f"{stem}{suffix}"
+
+
+def _name_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    raw_name = Path(unquote(parsed.path)).name
+    if not raw_name:
+        raw_name = "index.html" if parsed.path in {"", "/"} else "download.bin"
+
+    name = _sanitize_download_name(raw_name)
+    if "." not in name:
+        return f"{name}.bin"
+    return name
+
+
+def _download_url_bytes(
+    *,
+    url: str,
+    target_path: Path,
+    timeout_seconds: int,
+    max_bytes: int,
+) -> dict[str, Any]:
+    request = Request(
+        url=url,
+        headers={"User-Agent": "open-strix/fetch_url"},
+    )
+
+    with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+        status = int(response.getcode() or 0)
+        final_url = str(response.geturl())
+        content_type = str(response.headers.get("Content-Type", ""))
+
+        total_bytes = 0
+        hasher = hashlib.sha256()
+        with target_path.open("wb") as f:
+            while True:
+                chunk = response.read(FETCH_CHUNK_SIZE_BYTES)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    raise ValueError(
+                        f"download exceeded max_bytes={max_bytes} for url={url}",
+                    )
+                hasher.update(chunk)
+                f.write(chunk)
+
+    return {
+        "status": status,
+        "final_url": final_url,
+        "content_type": content_type,
+        "bytes": total_bytes,
+        "sha256": hasher.hexdigest(),
+    }
 
 
 class ToolsMixin:
@@ -228,6 +305,109 @@ class ToolsMixin:
                 returned=len(rendered),
             )
             return "\n".join(rendered)
+
+        @tool("fetch_url")
+        async def fetch_url(
+            url: str,
+            timeout_seconds: int = 20,
+            max_bytes: int = 2_000_000,
+        ) -> str:
+            """Download a URL to a session cache file and return its path + metadata."""
+            normalized_url = url.strip()
+            if not normalized_url:
+                return "url is required."
+            if timeout_seconds <= 0:
+                return "timeout_seconds must be > 0."
+            if max_bytes <= 0:
+                return "max_bytes must be > 0."
+
+            parsed = urlparse(normalized_url)
+            if parsed.scheme not in {"http", "https"}:
+                return "Only http:// and https:// URLs are supported."
+
+            cache_dir = self.fetch_cache_dir
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            base_name = _name_from_url(normalized_url)
+            digest = hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()[:12]
+            stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+            body_path = cache_dir / f"{stamp}-{digest}-{base_name}"
+            meta_path = cache_dir / f"{body_path.name}.meta.json"
+
+            try:
+                fetched = await asyncio.to_thread(
+                    _download_url_bytes,
+                    url=normalized_url,
+                    target_path=body_path,
+                    timeout_seconds=timeout_seconds,
+                    max_bytes=max_bytes,
+                )
+            except HTTPError as exc:
+                self.log_event(
+                    "tool_call_error",
+                    tool="fetch_url",
+                    url=normalized_url,
+                    error_type="http_error",
+                    status=getattr(exc, "code", None),
+                )
+                return f"fetch_url failed: HTTP {exc.code} ({exc.reason})"
+            except URLError as exc:
+                self.log_event(
+                    "tool_call_error",
+                    tool="fetch_url",
+                    url=normalized_url,
+                    error_type="url_error",
+                    reason=str(getattr(exc, "reason", exc)),
+                )
+                return f"fetch_url failed: {getattr(exc, 'reason', exc)}"
+            except ValueError as exc:
+                body_path.unlink(missing_ok=True)
+                self.log_event(
+                    "tool_call_error",
+                    tool="fetch_url",
+                    url=normalized_url,
+                    error_type="validation_error",
+                    error=str(exc),
+                )
+                return f"fetch_url failed: {exc}"
+            except OSError as exc:
+                body_path.unlink(missing_ok=True)
+                self.log_event(
+                    "tool_call_error",
+                    tool="fetch_url",
+                    url=normalized_url,
+                    error_type="filesystem_error",
+                    error_type_detail=type(exc).__name__,
+                )
+                return "fetch_url failed: could not write downloaded content."
+
+            body_virtual_path = _virtual_path(body_path, root=self.home)
+            meta_virtual_path = _virtual_path(meta_path, root=self.home)
+            payload = {
+                "url": normalized_url,
+                "final_url": fetched["final_url"],
+                "status": fetched["status"],
+                "content_type": fetched["content_type"],
+                "bytes": fetched["bytes"],
+                "sha256": fetched["sha256"],
+                "file_path": body_virtual_path,
+                "metadata_path": meta_virtual_path,
+            }
+            meta_path.write_text(
+                json.dumps(payload, ensure_ascii=True, sort_keys=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            self.log_event(
+                "tool_call",
+                tool="fetch_url",
+                url=normalized_url,
+                final_url=fetched["final_url"],
+                status=fetched["status"],
+                bytes=fetched["bytes"],
+                file_path=body_virtual_path,
+            )
+            return yaml.safe_dump(payload, sort_keys=False)
 
         @tool("journal")
         def journal(user_wanted: str, agent_did: str, predictions: str) -> str:
@@ -424,11 +604,13 @@ class ToolsMixin:
 
         send_message.handle_tool_error = True
         list_messages.handle_tool_error = True
+        fetch_url.handle_tool_error = True
 
         return [
             send_message,
             react,
             list_messages,
+            fetch_url,
             journal,
             list_memory_blocks,
             create_memory_block,
