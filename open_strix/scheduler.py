@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from datetime import timezone
 from typing import Any
@@ -116,15 +115,14 @@ class SchedulerMixin:
             )
         self.log_event("scheduler_reloaded", jobs=len(self._load_scheduler_jobs()))
 
-    def _on_scheduler_fire(self, name: str, prompt: str, channel_id: str | None = None) -> None:
-        asyncio.create_task(
-            self.enqueue_event(
-                AgentEvent(
-                    event_type="scheduler",
-                    prompt=prompt,
-                    channel_id=channel_id,
-                    scheduler_name=name,
-                    dedupe_key=f"scheduler:{name}",
-                ),
+    async def _on_scheduler_fire(self, name: str, prompt: str, channel_id: str | None = None) -> None:
+        # Async callback keeps scheduler execution on the event loop.
+        await self.enqueue_event(
+            AgentEvent(
+                event_type="scheduler",
+                prompt=prompt,
+                channel_id=channel_id,
+                scheduler_name=name,
+                dedupe_key=f"scheduler:{name}",
             ),
         )

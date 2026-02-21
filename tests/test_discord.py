@@ -299,6 +299,28 @@ async def test_handle_discord_message_from_allowlisted_bot_is_processed(
 
 
 @pytest.mark.asyncio
+async def test_scheduler_fire_enqueues_scheduler_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    await app._on_scheduler_fire(
+        name="twice-daily",
+        prompt="run report",
+        channel_id="123",
+    )
+
+    queued = app.queue.get_nowait()
+    assert queued.event_type == "scheduler"
+    assert queued.prompt == "run report"
+    assert queued.channel_id == "123"
+    assert queued.scheduler_name == "twice-daily"
+    assert queued.dedupe_key == "scheduler:twice-daily"
+
+
+@pytest.mark.asyncio
 async def test_send_message_tool_sends_when_discord_client_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
