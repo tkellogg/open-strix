@@ -58,10 +58,6 @@ def _run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _has_local_git_repo(home: Path) -> bool:
-    return (home / ".git").exists()
-
-
 def _ensure_git_repo(home: Path) -> None:
     if (home / ".git").exists():
         return
@@ -128,12 +124,76 @@ def _ensure_github_remote(home: Path, repo_name: str | None = None) -> None:
         print("GitHub remote created. Initial commit/push skipped (check git user.name/user.email).", flush=True)
 
 
+def _resolve_missing_gh_behavior() -> bool:
+    """Handle --github when gh is missing.
+
+    Returns:
+        True if setup should continue with GitHub remote setup.
+        False if setup should continue without GitHub remote setup.
+
+    Raises:
+        RuntimeError: If user chooses to abort or prompt is unavailable.
+    """
+    if shutil.which("gh") is not None:
+        return True
+
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "`gh` is required for --github but was not found, and setup is non-interactive. "
+            "Install gh first or rerun setup without --github.",
+        )
+
+    print("`gh` is required for --github but was not found.", flush=True)
+    print("Choose one:", flush=True)
+    print("  1) Wait while I install gh, then retry", flush=True)
+    print("  2) Abandon setup", flush=True)
+    print("  3) Continue setup without GitHub remote", flush=True)
+
+    while True:
+        try:
+            choice = input("Enter 1, 2, or 3: ").strip()
+        except EOFError as exc:
+            raise RuntimeError("Setup aborted: input stream closed.") from exc
+        except KeyboardInterrupt as exc:
+            raise RuntimeError("Setup aborted by user.") from exc
+
+        if choice == "1":
+            while True:
+                if shutil.which("gh") is not None:
+                    print("Detected gh. Continuing with GitHub setup.", flush=True)
+                    return True
+                try:
+                    retry = input(
+                        "gh still not found. Press Enter to retry, or type 2 to abandon, 3 to continue without GitHub: ",
+                    ).strip()
+                except EOFError as exc:
+                    raise RuntimeError("Setup aborted: input stream closed.") from exc
+                except KeyboardInterrupt as exc:
+                    raise RuntimeError("Setup aborted by user.") from exc
+
+                if retry == "2":
+                    raise RuntimeError("Setup aborted by user.")
+                if retry == "3":
+                    return False
+                if retry:
+                    print("Please enter 2, 3, or press Enter.", flush=True)
+        elif choice == "2":
+            raise RuntimeError("Setup aborted by user.")
+        elif choice == "3":
+            return False
+        else:
+            print("Invalid choice. Enter 1, 2, or 3.", flush=True)
+
+
 def setup_home(home: Path, *, github: bool = False, repo_name: str | None = None) -> None:
     if shutil.which("git") is None:
         raise RuntimeError("`git` is required for setup but was not found in PATH.")
 
     home = home.resolve()
     home.mkdir(parents=True, exist_ok=True)
+
+    if github and shutil.which("gh") is None:
+        github = _resolve_missing_gh_behavior()
 
     _ensure_git_repo(home)
 
@@ -178,7 +238,7 @@ def _print_setup_walkthrough(home: Path) -> None:
         - K2 update post: {MOONSHOT_K2_POST_URL}
         - create API key in Moonshot console, then set:
           - ANTHROPIC_API_KEY=<your_moonshot_key>
-          - ANTHROPIC_BASE_URL=<your_moonshot_anthropic_compatible_url>
+          - ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic
         - update config.yaml model to your current Kimi model ID from Moonshot docs/console.
 
         2) Set up Tavily web search (recommended)
@@ -188,17 +248,26 @@ def _print_setup_walkthrough(home: Path) -> None:
         - if omitted, open-strix starts normally but the `web_search` tool is disabled.
 
         3) Set up Discord bot
-        - create app + bot: {DISCORD_DEV_PORTAL_URL}
-        - walkthrough docs: {DISCORD_GETTING_STARTED_URL}
-        - OAuth scopes docs: {DISCORD_OAUTH_URL}
-        - permissions docs: {DISCORD_PERMISSIONS_URL}
-        - gateway/intents docs: {DISCORD_GATEWAY_URL}
-        - in Bot settings, enable Message Content Intent.
-        - in Installation, create an install link with bot scope and permissions:
-          View Channels, Send Messages, Send Messages in Threads, Read Message History, Add Reactions.
-        - invite bot to your private server/channel.
-        - set in .env:
-          - DISCORD_TOKEN=<your_discord_bot_token>
+        - First click: {DISCORD_DEV_PORTAL_URL}
+        - General Information: set bot name and basic app metadata.
+        - Installation: set Install Link to None, then save.
+        - OAuth2 -> URL Generator:
+          - check `bot`
+          - choose practical bot permissions (focus on messaging/reactions/history/attachments):
+            View Channels, Send Messages, Send Messages in Threads, Read Message History, Add Reactions, Attach Files.
+        - Bot tab:
+          - disable Public Bot
+          - enable Message Content Intent
+          - (later) set avatar/profile polish
+        - Bot tab -> Reset Token:
+          - copy token immediately and set in `.env`:
+            DISCORD_TOKEN=<your_discord_bot_token>
+        - helpful docs:
+          - create app + bot: {DISCORD_DEV_PORTAL_URL}
+          - getting started: {DISCORD_GETTING_STARTED_URL}
+          - OAuth scopes docs: {DISCORD_OAUTH_URL}
+          - permissions docs: {DISCORD_PERMISSIONS_URL}
+          - gateway/intents docs: {DISCORD_GATEWAY_URL}
 
         4) Config walkthrough (config.yaml)
         - model: model name or provider:model
@@ -248,22 +317,6 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command in (None, "run"):
         run_home = getattr(args, "home", None)
-        candidate_home = run_home.resolve() if isinstance(run_home, Path) else Path.cwd().resolve()
-
-        auto_setup_needed = not _has_local_git_repo(candidate_home)
-        if auto_setup_needed:
-            print(
-                f"No local git repo detected at {candidate_home}; running setup automatically.",
-                flush=True,
-            )
-            try:
-                setup_home(home=candidate_home, github=False, repo_name=None)
-            except RuntimeError as exc:
-                print(str(exc), flush=True)
-                sys.exit(1)
-            run_open_strix(home=candidate_home)
-            return
-
         run_open_strix(home=run_home)
         return
 

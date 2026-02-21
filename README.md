@@ -28,7 +28,7 @@ cd my-agent
 uvx open-strix
 ```
 
-If you run `uvx open-strix` in a plain directory with no git repo, it now auto-runs setup first.
+Run setup explicitly first (`uvx open-strix setup ...`), then run `uvx open-strix`.
 
 `open-strix setup` bootstraps the target directory with:
 
@@ -185,7 +185,8 @@ MiniMax docs:
 
 If you want Kimi instead of MiniMax:
 
-1. Point Anthropic-compatible env vars at your Moonshot endpoint (see Moonshot docs for current endpoint details).
+1. Point Anthropic-compatible env vars at Moonshot:
+   - `ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic`
 2. Set `model` in `config.yaml` to the current Kimi model ID you want.
 
 Moonshot docs:
@@ -210,22 +211,25 @@ Behavior:
 
 Use Discord's Developer Portal web UI:
 
-1. Go to https://discord.com/developers/applications and create a new application.
-2. Open your app, then go to the `Bot` tab.
-3. Under `Token`, generate/reset token and copy it (you won't be able to re-view it later).
-4. In the same `Bot` tab, enable `Message Content Intent` (required for open-strix message handling).
-5. Go to `Installation`.
-6. Under `Installation Contexts`, enable `Guild Install`.
-7. Under `Install Link`, pick `Discord Provided Link`.
-8. Under `Default Install Settings`:
-   - `Guild Install` scopes: select `bot` (and `applications.commands` if you plan to add slash commands).
-   - `Permissions`: for this bot, a practical baseline is:
+1. General Information: set app/bot name and any basic metadata.
+2. Installation: set `Install Link` to `None`, then save.
+3. OAuth2 -> URL Generator:
+   - check `bot`
+   - select practical bot permissions (focus on messaging/reactions/history/attachments):
      - `View Channels`
      - `Send Messages`
      - `Send Messages in Threads`
      - `Read Message History`
      - `Add Reactions`
-9. Copy the generated install link, open it in your browser, pick your server, and authorize.
+     - `Attach Files`
+4. Bot tab:
+   - disable `Public Bot`
+   - enable `Message Content Intent`
+   - (later) set avatar/profile polish
+5. Bot tab -> `Reset Token`:
+   - copy token immediately (it may not be shown again)
+   - set `.env`: `DISCORD_TOKEN=<your_discord_bot_token>`
+6. Use the generated OAuth2 bot invite URL to add the bot to your server.
 
 Reference docs for the same flow:
 
