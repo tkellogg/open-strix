@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,7 @@ from .scheduler import SchedulerJob
 UTC = timezone.utc
 FETCH_CHUNK_SIZE_BYTES = 64 * 1024
 DEFAULT_TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+SHELL_OUTPUT_LIMIT_CHARS = 12_000
 
 
 def _parse_time_window(value: str | None) -> timedelta | None:
@@ -160,8 +163,39 @@ def _post_json(
         }
 
 
+def _shell_tool_name() -> str:
+    if os.name == "nt":
+        return "powershell"
+    return "bash"
+
+
+def _shell_command_for_platform(command: str) -> list[str]:
+    if os.name == "nt":
+        return [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ]
+    return ["bash", "-lc", command]
+
+
+def _run_shell(command: str, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        _shell_command_for_platform(command),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout_seconds,
+    )
+
+
 class ToolsMixin:
     def _build_tools(self) -> list[Any]:
+        shell_tool_name = _shell_tool_name()
+
         @tool("send_message")
         async def send_message(text: str, channel_id: str | None = None) -> str:
             """Send a Discord message to a channel. Defaults to the current event channel."""
@@ -342,6 +376,68 @@ class ToolsMixin:
                 returned=len(rendered),
             )
             return "\n".join(rendered)
+
+        @tool(shell_tool_name)
+        async def run_shell_tool(
+            command: str,
+            timeout_seconds: int = 120,
+            max_output_chars: int = SHELL_OUTPUT_LIMIT_CHARS,
+        ) -> str:
+            """Run an arbitrary shell command on this machine."""
+            normalized_command = command.strip()
+            if not normalized_command:
+                return "command is required."
+            if timeout_seconds <= 0:
+                return "timeout_seconds must be > 0."
+            if max_output_chars <= 0:
+                return "max_output_chars must be > 0."
+
+            try:
+                completed = await asyncio.to_thread(
+                    _run_shell,
+                    command=normalized_command,
+                    timeout_seconds=timeout_seconds,
+                )
+            except FileNotFoundError:
+                self.log_event(
+                    "tool_call_error",
+                    tool=shell_tool_name,
+                    error_type="missing_shell_binary",
+                )
+                return f"{shell_tool_name} is not available on this machine."
+            except subprocess.TimeoutExpired as exc:
+                partial_stdout = str(exc.stdout or "")
+                partial_stderr = str(exc.stderr or "")
+                partial = "\n".join([part for part in (partial_stdout, partial_stderr) if part]).strip()
+                if len(partial) > max_output_chars:
+                    partial = partial[:max_output_chars] + "\n[output truncated]"
+                self.log_event(
+                    "tool_call_error",
+                    tool=shell_tool_name,
+                    error_type="timeout",
+                    timeout_seconds=timeout_seconds,
+                    command_preview=normalized_command[:200],
+                )
+                if partial:
+                    return f"{shell_tool_name} timed out after {timeout_seconds}s.\n{partial}"
+                return f"{shell_tool_name} timed out after {timeout_seconds}s."
+
+            stdout_text = completed.stdout or ""
+            stderr_text = completed.stderr or ""
+            combined = "\n".join([part for part in (stdout_text, stderr_text) if part]).strip()
+            if not combined:
+                combined = "(no output)"
+            if len(combined) > max_output_chars:
+                combined = combined[:max_output_chars] + "\n[output truncated]"
+
+            self.log_event(
+                "tool_call",
+                tool=shell_tool_name,
+                exit_code=completed.returncode,
+                timeout_seconds=timeout_seconds,
+                command_preview=normalized_command[:200],
+            )
+            return f"[exit_code={completed.returncode}]\n{combined}"
 
         @tool("fetch_url")
         async def fetch_url(
@@ -767,12 +863,14 @@ class ToolsMixin:
 
         send_message.handle_tool_error = True
         list_messages.handle_tool_error = True
+        run_shell_tool.handle_tool_error = True
         fetch_url.handle_tool_error = True
 
         tools: list[Any] = [
             send_message,
             react,
             list_messages,
+            run_shell_tool,
             fetch_url,
             journal,
             list_memory_blocks,

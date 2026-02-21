@@ -5,6 +5,7 @@ import contextlib
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import threading
 from types import SimpleNamespace
@@ -318,6 +319,37 @@ async def test_scheduler_fire_enqueues_scheduler_event(
     assert queued.channel_id == "123"
     assert queued.scheduler_name == "twice-daily"
     assert queued.dedupe_key == "scheduler:twice-daily"
+
+
+def test_shell_tool_name_matches_platform(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    if os.name == "nt":
+        assert "powershell" in tools
+        assert "bash" not in tools
+    else:
+        assert "bash" in tools
+        assert "powershell" not in tools
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="bash execution test is Unix-only")
+async def test_bash_tool_executes_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    result = await tools["bash"].ainvoke({"command": "echo hello-shell"})
+    assert "[exit_code=0]" in result
+    assert "hello-shell" in result
 
 
 @pytest.mark.asyncio
