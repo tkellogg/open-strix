@@ -302,3 +302,7 @@ Live test env vars:
 - Agent file writes/edits are blocked outside `state/`.
 - Reads still use repository scope.
 - This is intentionally simple and should not be treated as production-ready.
+
+## License
+
+MIT. See `LICENSE`.

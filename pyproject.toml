@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Tim Kellogg", email = "timothy.kellogg@gmail.com" }]
 maintainers = [{ name = "Tim Kellogg", email = "timothy.kellogg@gmail.com" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
     "apscheduler>=3.11.2",
     "deepagents>=0.4.1",
