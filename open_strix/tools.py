@@ -19,6 +19,7 @@ from .scheduler import SchedulerJob
 
 UTC = timezone.utc
 FETCH_CHUNK_SIZE_BYTES = 64 * 1024
+DEFAULT_TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 
 def _parse_time_window(value: str | None) -> timedelta | None:
@@ -121,6 +122,42 @@ def _download_url_bytes(
         "bytes": total_bytes,
         "sha256": hasher.hexdigest(),
     }
+
+
+def _post_json(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout_seconds: int,
+    max_bytes: int = 2_000_000,
+) -> dict[str, Any]:
+    request_bytes = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+    request_headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "open-strix/web_search",
+        **headers,
+    }
+    request = Request(
+        url=url,
+        data=request_bytes,
+        headers=request_headers,
+        method="POST",
+    )
+
+    with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+        status = int(response.getcode() or 0)
+        body = response.read(max_bytes + 1)
+        if len(body) > max_bytes:
+            raise ValueError(f"response exceeded max_bytes={max_bytes} for url={url}")
+        decoded = body.decode("utf-8", errors="replace")
+        parsed = json.loads(decoded)
+        return {
+            "status": status,
+            "json": parsed,
+            "response_bytes": len(body),
+            "final_url": str(response.geturl()),
+        }
 
 
 class ToolsMixin:
@@ -409,6 +446,132 @@ class ToolsMixin:
             )
             return yaml.safe_dump(payload, sort_keys=False)
 
+        @tool("web_search")
+        async def web_search(
+            query: str,
+            limit: int = 5,
+            topic: str = "general",
+            time_range: str | None = None,
+            timeout_seconds: int = 20,
+        ) -> str:
+            """Search the web via Tavily and return compact results."""
+            normalized_query = query.strip()
+            if not normalized_query:
+                return "query is required."
+            if limit <= 0:
+                return "limit must be > 0."
+            if limit > 10:
+                limit = 10
+
+            normalized_topic = topic.strip().lower()
+            if normalized_topic not in {"general", "news", "finance"}:
+                return "topic must be one of: general, news, finance."
+
+            normalized_time_range = time_range.strip().lower() if time_range else None
+            if normalized_time_range and normalized_time_range not in {"day", "week", "month", "year"}:
+                return "time_range must be one of: day, week, month, year."
+            if timeout_seconds <= 0:
+                return "timeout_seconds must be > 0."
+
+            if not self.web_search_enabled:
+                return "web_search is disabled."
+
+            api_key = self.tavily_api_key
+            if not api_key:
+                return "web_search is disabled."
+
+            search_url = self.tavily_search_url or DEFAULT_TAVILY_SEARCH_URL
+            if not search_url:
+                return "TAVILY_SEARCH_URL is empty."
+
+            payload: dict[str, Any] = {
+                "query": normalized_query,
+                "topic": normalized_topic,
+                "max_results": limit,
+                "search_depth": "basic",
+                "include_answer": False,
+                "include_raw_content": False,
+                "include_images": False,
+            }
+            if normalized_time_range:
+                payload["time_range"] = normalized_time_range
+
+            try:
+                response = await asyncio.to_thread(
+                    _post_json,
+                    url=search_url,
+                    payload=payload,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout_seconds=timeout_seconds,
+                )
+            except HTTPError as exc:
+                self.log_event(
+                    "tool_call_error",
+                    tool="web_search",
+                    query=normalized_query,
+                    error_type="http_error",
+                    status=getattr(exc, "code", None),
+                )
+                return f"web_search failed: HTTP {exc.code} ({exc.reason})"
+            except URLError as exc:
+                self.log_event(
+                    "tool_call_error",
+                    tool="web_search",
+                    query=normalized_query,
+                    error_type="url_error",
+                    reason=str(getattr(exc, "reason", exc)),
+                )
+                return f"web_search failed: {getattr(exc, 'reason', exc)}"
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.log_event(
+                    "tool_call_error",
+                    tool="web_search",
+                    query=normalized_query,
+                    error_type="decode_error",
+                    error=str(exc),
+                )
+                return f"web_search failed: {exc}"
+
+            raw = response["json"]
+            rows = raw.get("results")
+            if not isinstance(rows, list):
+                rows = []
+
+            compact_results: list[dict[str, Any]] = []
+            for idx, item in enumerate(rows[:limit], start=1):
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title", "")).strip()
+                url = str(item.get("url", "")).strip()
+                snippet = str(item.get("content", "")).strip()
+                if len(snippet) > 320:
+                    snippet = snippet[:320].rstrip() + "..."
+                compact_results.append(
+                    {
+                        "rank": idx,
+                        "title": title,
+                        "url": url,
+                        "snippet": snippet,
+                        "score": item.get("score"),
+                    },
+                )
+
+            result_payload = {
+                "query": normalized_query,
+                "topic": normalized_topic,
+                "time_range": normalized_time_range,
+                "count": len(compact_results),
+                "results": compact_results,
+                "response_time": raw.get("response_time"),
+            }
+            self.log_event(
+                "tool_call",
+                tool="web_search",
+                query=normalized_query,
+                count=len(compact_results),
+            )
+            return yaml.safe_dump(result_payload, sort_keys=False)
+
         @tool("journal")
         def journal(user_wanted: str, agent_did: str, predictions: str) -> str:
             """Write a journal entry and return checkpoint guidance."""
@@ -606,7 +769,7 @@ class ToolsMixin:
         list_messages.handle_tool_error = True
         fetch_url.handle_tool_error = True
 
-        return [
+        tools: list[Any] = [
             send_message,
             react,
             list_messages,
@@ -620,3 +783,7 @@ class ToolsMixin:
             add_schedule,
             remove_schedule,
         ]
+        if self.web_search_enabled:
+            web_search.handle_tool_error = True
+            tools.insert(4, web_search)
+        return tools

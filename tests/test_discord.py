@@ -643,6 +643,95 @@ async def test_fetch_url_tool_rejects_non_http_scheme(
 
 
 @pytest.mark.asyncio
+async def test_web_search_tool_uses_tavily_and_returns_compact_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    observed: dict[str, Any] = {}
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            observed["path"] = self.path
+            observed["auth"] = self.headers.get("Authorization")
+            length = int(self.headers.get("Content-Length", "0"))
+            observed["body"] = json.loads(self.rfile.read(length).decode("utf-8"))
+
+            payload = {
+                "results": [
+                    {
+                        "title": "Alpha result",
+                        "url": "https://example.com/a",
+                        "content": "Alpha snippet",
+                        "score": 0.91,
+                    },
+                    {
+                        "title": "Beta result",
+                        "url": "https://example.com/b",
+                        "content": "Beta snippet",
+                        "score": 0.88,
+                    },
+                ],
+                "response_time": 0.12,
+            }
+            response_bytes = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+
+        def log_message(self, *_: Any) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    monkeypatch.setenv("TAVILY_SEARCH_URL", f"http://127.0.0.1:{server.server_port}/search")
+    app = app_mod.OpenStrixApp(tmp_path)
+    try:
+        tools = {tool.name: tool for tool in app._build_tools()}
+        assert "web_search" in tools
+        result = await tools["web_search"].ainvoke(
+            {"query": "alpha", "limit": 2, "topic": "news", "time_range": "week"},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+    assert observed["path"] == "/search"
+    assert observed["auth"] == "Bearer test-key"
+    assert observed["body"]["query"] == "alpha"
+    assert observed["body"]["topic"] == "news"
+    assert observed["body"]["max_results"] == 2
+    assert observed["body"]["time_range"] == "week"
+
+    payload = yaml.safe_load(result)
+    assert payload["count"] == 2
+    assert payload["results"][0]["title"] == "Alpha result"
+    assert payload["results"][0]["url"] == "https://example.com/a"
+    assert "raw_results_path" not in payload
+    assert payload["response_time"] == 0.12
+
+
+def test_web_search_tool_excluded_without_tavily_api_key_and_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    app = app_mod.OpenStrixApp(tmp_path)
+    output = capsys.readouterr().out
+    assert "TAVILY_API_KEY is not set" in output
+    tools = {tool.name: tool for tool in app._build_tools()}
+    assert "web_search" not in tools
+
+
+@pytest.mark.asyncio
 async def test_shutdown_removes_fetch_cache_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

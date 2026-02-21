@@ -220,6 +220,14 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         bootstrap_home_repo(self.layout, checkpoint_text=DEFAULT_CHECKPOINT)
         self.config = load_config(self.layout)
         load_dotenv(dotenv_path=self.layout.env_file, override=False)
+        self.tavily_api_key = os.getenv("TAVILY_API_KEY", "").strip()
+        self.tavily_search_url = os.getenv("TAVILY_SEARCH_URL", "").strip()
+        self.web_search_enabled = bool(self.tavily_api_key)
+        if not self.web_search_enabled:
+            print(
+                "[open-strix] warning: TAVILY_API_KEY is not set; web_search tool is disabled.",
+                flush=True,
+            )
 
         self.queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
         self.scheduler = AsyncIOScheduler(timezone=UTC)

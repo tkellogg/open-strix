@@ -64,6 +64,7 @@ def test_cli_setup_scaffolds_home(tmp_path: Path) -> None:
 
     env_text = (home / ".env").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY=" in env_text
+    assert "TAVILY_API_KEY=" in env_text
     assert "DISCORD_TOKEN=" in env_text
 
     # Idempotent: second setup run should preserve existing files and not fail.
@@ -82,5 +83,6 @@ def test_cli_setup_prints_walkthrough(tmp_path: Path, capsys: pytest.CaptureFixt
     assert "Setup walkthrough" in out
     assert "Option A: MiniMax M2.5" in out
     assert "Option B: Kimi (Moonshot, K2 family)" in out
+    assert "Set up Tavily web search (recommended)" in out
     assert "Set up Discord bot" in out
     assert "config.yaml" in out

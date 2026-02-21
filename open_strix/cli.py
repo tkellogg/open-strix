@@ -17,6 +17,9 @@ DEFAULT_ENV = """\
 ANTHROPIC_API_KEY=
 ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic
 
+# Optional web search (Tavily). Without this, web_search is disabled.
+TAVILY_API_KEY=
+
 # Discord bot token
 DISCORD_TOKEN=
 
@@ -36,6 +39,7 @@ DISCORD_GETTING_STARTED_URL = "https://docs.discord.com/developers/quick-start/g
 DISCORD_OAUTH_URL = "https://docs.discord.com/developers/topics/oauth2"
 DISCORD_PERMISSIONS_URL = "https://docs.discord.com/developers/topics/permissions"
 DISCORD_GATEWAY_URL = "https://docs.discord.com/developers/events/gateway"
+TAVILY_PLATFORM_URL = "https://tavily.com/"
 
 
 def _write_if_missing(path: Path, content: str) -> None:
@@ -177,7 +181,13 @@ def _print_setup_walkthrough(home: Path) -> None:
           - ANTHROPIC_BASE_URL=<your_moonshot_anthropic_compatible_url>
         - update config.yaml model to your current Kimi model ID from Moonshot docs/console.
 
-        2) Set up Discord bot
+        2) Set up Tavily web search (recommended)
+        - open platform: {TAVILY_PLATFORM_URL}
+        - create an API key, then set in .env:
+          - TAVILY_API_KEY=<your_tavily_key>
+        - if omitted, open-strix starts normally but the `web_search` tool is disabled.
+
+        3) Set up Discord bot
         - create app + bot: {DISCORD_DEV_PORTAL_URL}
         - walkthrough docs: {DISCORD_GETTING_STARTED_URL}
         - OAuth scopes docs: {DISCORD_OAUTH_URL}
@@ -190,14 +200,14 @@ def _print_setup_walkthrough(home: Path) -> None:
         - set in .env:
           - DISCORD_TOKEN=<your_discord_bot_token>
 
-        3) Config walkthrough (config.yaml)
+        4) Config walkthrough (config.yaml)
         - model: model name or provider:model
         - journal_entries_in_prompt: number of journal rows injected into prompt
         - discord_messages_in_prompt: number of recent Discord messages in prompt
         - discord_token_env: env var to read Discord token from (default DISCORD_TOKEN)
         - always_respond_bot_ids: bot IDs this agent is allowed to respond to
 
-        4) Run
+        5) Run
         - start agent: uvx open-strix
         - if no token is set, open-strix runs stdin mode.
         """
