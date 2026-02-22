@@ -47,7 +47,13 @@ from .models import AgentEvent
 from .prompts import DEFAULT_CHECKPOINT, SYSTEM_PROMPT, render_turn_prompt
 from .readonly_backend import BUILTIN_SKILLS_ROUTE, build_builtin_skills_backend
 from .scheduler import SchedulerJob, SchedulerMixin
-from .tools import ToolsMixin
+from .tools import (
+    SEND_MESSAGE_LOOP_HARD_LIMIT,
+    SEND_MESSAGE_LOOP_SIMILARITY_THRESHOLD,
+    SEND_MESSAGE_LOOP_SOFT_LIMIT,
+    SendMessageCircuitBreakerStop,
+    ToolsMixin,
+)
 
 UTC = timezone.utc
 LOG_ROLL_BYTES = 1_000_000
@@ -244,6 +250,13 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.discord_client: DiscordBridge | None = None
         self.worker_task: asyncio.Task[Any] | None = None
         self._current_turn_sent_messages: list[tuple[str, str]] | None = None
+        self.send_message_loop_soft_limit = SEND_MESSAGE_LOOP_SOFT_LIMIT
+        self.send_message_loop_hard_limit = SEND_MESSAGE_LOOP_HARD_LIMIT
+        self.send_message_loop_similarity_threshold = SEND_MESSAGE_LOOP_SIMILARITY_THRESHOLD
+        self._send_message_last_text_normalized: str | None = None
+        self._send_message_similarity_streak = 0
+        self._send_message_circuit_breaker_active = False
+        self._send_message_warning_reaction_sent = False
 
         mutable_backend = StateWriteGuardBackend(root_dir=self.home, state_dir=STATE_DIR_NAME)
         builtin_backend = build_builtin_skills_backend()
@@ -455,6 +468,15 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             self.current_channel_id = event.channel_id
             try:
                 await self._process_event(event)
+            except SendMessageCircuitBreakerStop as exc:
+                self.log_event(
+                    "warning",
+                    where="event_worker",
+                    warning_type="send_message_loop_hard_stop",
+                    source_event_type=event.event_type,
+                    channel_id=event.channel_id,
+                    error=str(exc),
+                )
             except Exception as exc:
                 reacted = await self._react_to_latest_message(
                     channel_id=event.channel_id,
@@ -476,6 +498,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
 
     async def _process_event(self, event: AgentEvent) -> None:
         self._current_turn_sent_messages = []
+        self._reset_send_message_circuit_breaker()
         prompt = self._render_prompt(event)
         self.log_event(
             "agent_invoke_start",
@@ -497,6 +520,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             )
             await self._run_post_turn_git_sync(event)
         finally:
+            self._reset_send_message_circuit_breaker()
             self._current_turn_sent_messages = None
 
     def _log_agent_trace(self, result: dict[str, Any]) -> None:

@@ -1,7 +1,11 @@
 # open-strix
 [![PyPI version](https://img.shields.io/pypi/v/open-strix.svg)](https://pypi.org/project/open-strix/)
 
-Minimal, non-production autonomous agent harness built with LangGraph Deep Agents.
+An AI agent that talks to you over Discord.
+
+* Memory blocks + files, all committed to Github
+* Web fetch/search, files, bash/powershell, subagents
+* Skills
 
 ## Install uv
 

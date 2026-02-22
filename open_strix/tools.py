@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from difflib import SequenceMatcher
 import hashlib
 import json
 import os
@@ -17,12 +18,20 @@ import discord
 import yaml
 from langchain_core.tools import ToolException, tool
 
+from .discord import ERROR_REACTION_EMOJI, WARNING_REACTION_EMOJI
 from .scheduler import SchedulerJob
 
 UTC = timezone.utc
 FETCH_CHUNK_SIZE_BYTES = 64 * 1024
 DEFAULT_TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 SHELL_OUTPUT_LIMIT_CHARS = 12_000
+SEND_MESSAGE_LOOP_SOFT_LIMIT = 3
+SEND_MESSAGE_LOOP_HARD_LIMIT = 10
+SEND_MESSAGE_LOOP_SIMILARITY_THRESHOLD = 0.98
+
+
+class SendMessageCircuitBreakerStop(RuntimeError):
+    """Raised when send_message loop detection hard-stops the current turn."""
 
 
 def _parse_time_window(value: str | None) -> timedelta | None:
@@ -193,6 +202,67 @@ def _run_shell(command: str, timeout_seconds: int) -> subprocess.CompletedProces
 
 
 class ToolsMixin:
+    def _reset_send_message_circuit_breaker(self) -> None:
+        self._send_message_last_text_normalized = None
+        self._send_message_similarity_streak = 0
+        self._send_message_circuit_breaker_active = False
+        self._send_message_warning_reaction_sent = False
+
+    def _latest_agent_message_reference(
+        self,
+        channel_id: str | None,
+    ) -> tuple[str | None, str | None]:
+        if self._current_turn_sent_messages:
+            for sent_channel_id, sent_message_id in reversed(self._current_turn_sent_messages):
+                if sent_message_id:
+                    return sent_message_id, sent_channel_id
+
+        if channel_id is not None:
+            for item in reversed(self.message_history_by_channel.get(channel_id, [])):
+                if not bool(item.get("is_bot")):
+                    continue
+                message_id = str(item.get("message_id", "")).strip()
+                if message_id:
+                    return message_id, channel_id
+            return None, channel_id
+
+        for item in reversed(self.message_history_all):
+            if not bool(item.get("is_bot")):
+                continue
+            message_id = str(item.get("message_id", "")).strip()
+            row_channel_id = str(item.get("channel_id", "")).strip()
+            if message_id and row_channel_id:
+                return message_id, row_channel_id
+        return None, None
+
+    async def _react_to_last_agent_message(self, channel_id: str | None, emoji: str) -> bool:
+        message_id, target_channel_id = self._latest_agent_message_reference(channel_id)
+        if message_id is None or target_channel_id is None:
+            return False
+        return await self._react_to_message(
+            channel_id=target_channel_id,
+            message_id=message_id,
+            emoji=emoji,
+        )
+
+    def _update_send_message_similarity_streak(self, text: str) -> tuple[int, float]:
+        normalized_text = re.sub(r"\s+", " ", text.strip()).lower()
+        previous = self._send_message_last_text_normalized
+        similarity_ratio = 0.0
+
+        if previous is None:
+            streak = 1
+        else:
+            similarity_ratio = SequenceMatcher(a=previous, b=normalized_text).ratio()
+            if similarity_ratio >= self.send_message_loop_similarity_threshold:
+                streak = self._send_message_similarity_streak + 1
+            else:
+                streak = 1
+
+        self._send_message_last_text_normalized = normalized_text
+        self._send_message_similarity_streak = streak
+        return streak, similarity_ratio
+
     def _build_tools(self) -> list[Any]:
         shell_tool_name = _shell_tool_name()
 
@@ -212,6 +282,53 @@ class ToolsMixin:
             target_channel_id = channel_id or self.current_channel_id
             if target_channel_id is None:
                 return "No channel_id provided and no current event channel is available."
+
+            streak, similarity_ratio = self._update_send_message_similarity_streak(text)
+            if streak >= self.send_message_loop_soft_limit:
+                self._send_message_circuit_breaker_active = True
+
+            if self._send_message_circuit_breaker_active:
+
+                warning_reacted = False
+                if not self._send_message_warning_reaction_sent:
+                    warning_reacted = await self._react_to_last_agent_message(
+                        channel_id=target_channel_id,
+                        emoji=WARNING_REACTION_EMOJI,
+                    )
+                    if warning_reacted:
+                        self._send_message_warning_reaction_sent = True
+
+                if streak >= self.send_message_loop_hard_limit:
+                    hard_stop_reacted = await self._react_to_last_agent_message(
+                        channel_id=target_channel_id,
+                        emoji=ERROR_REACTION_EMOJI,
+                    )
+                    self.log_event(
+                        "send_message_loop_hard_stop",
+                        tool="send_message",
+                        channel_id=target_channel_id,
+                        streak=streak,
+                        similarity_ratio=round(similarity_ratio, 6),
+                        reacted=hard_stop_reacted,
+                    )
+                    raise SendMessageCircuitBreakerStop(
+                        "send_message hard stop: detected repeated near-duplicate loop. "
+                        "Turn terminated at streak=10 for safety.",
+                    )
+
+                self.log_event(
+                    "send_message_loop_detected",
+                    tool="send_message",
+                    channel_id=target_channel_id,
+                    streak=streak,
+                    similarity_ratio=round(similarity_ratio, 6),
+                    reacted_warning=warning_reacted,
+                )
+                return (
+                    "Loop detected in send_message calls. Message delivery is paused for this turn "
+                    "to prevent an infinite output loop. Stop repeating similar messages immediately, "
+                    "change strategy, and finish the turn safely."
+                )
 
             sent, sent_message_id, sent_chunks = await self._send_discord_message(
                 channel_id=target_channel_id,

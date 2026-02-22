@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 import open_strix.app as app_mod
+from open_strix.tools import SendMessageCircuitBreakerStop
 
 
 class DummyAgent:
@@ -455,6 +456,216 @@ async def test_send_message_tool_chunks_long_messages_for_discord_limit(
     assert "chunks=3" in result
     assert len(channel.sent) == 3
     assert [len(chunk) for chunk in channel.sent] == [2000, 2000, 123]
+
+
+@pytest.mark.asyncio
+async def test_send_message_circuit_breaker_blocks_near_duplicate_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeMessageable:
+        pass
+
+    class FakeSentMessage:
+        def __init__(self, message_id: int) -> None:
+            self.id = message_id
+            self.reactions: list[str] = []
+
+        async def add_reaction(self, emoji: str) -> None:
+            self.reactions.append(emoji)
+
+    class FakeChannel(FakeMessageable):
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.message_by_id: dict[int, FakeSentMessage] = {}
+
+        async def send(self, text: str) -> FakeSentMessage:
+            self.sent.append(text)
+            msg = FakeSentMessage(100 + len(self.sent))
+            self.message_by_id[msg.id] = msg
+            return msg
+
+        async def fetch_message(self, message_id: int) -> FakeSentMessage:
+            return self.message_by_id[message_id]
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    monkeypatch.setattr(app_mod.discord.abc, "Messageable", FakeMessageable)
+
+    text = "status-update " + ("x" * 400)
+    tools = {tool.name: tool for tool in app._build_tools()}
+    first = await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+    second = await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+    third = await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+
+    assert "sent=True" in first
+    assert "sent=True" in second
+    assert "loop detected" in third.lower()
+    assert len(channel.sent) == 2
+    assert channel.message_by_id[102].reactions == [app_mod.WARNING_REACTION_EMOJI]
+
+
+@pytest.mark.asyncio
+async def test_send_message_circuit_breaker_hard_stops_at_ten_duplicates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeMessageable:
+        pass
+
+    class FakeSentMessage:
+        def __init__(self, message_id: int) -> None:
+            self.id = message_id
+            self.reactions: list[str] = []
+
+        async def add_reaction(self, emoji: str) -> None:
+            self.reactions.append(emoji)
+
+    class FakeChannel(FakeMessageable):
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.message_by_id: dict[int, FakeSentMessage] = {}
+
+        async def send(self, text: str) -> FakeSentMessage:
+            self.sent.append(text)
+            msg = FakeSentMessage(100 + len(self.sent))
+            self.message_by_id[msg.id] = msg
+            return msg
+
+        async def fetch_message(self, message_id: int) -> FakeSentMessage:
+            return self.message_by_id[message_id]
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    monkeypatch.setattr(app_mod.discord.abc, "Messageable", FakeMessageable)
+
+    text = "status-update " + ("x" * 400)
+    tools = {tool.name: tool for tool in app._build_tools()}
+    for _ in range(9):
+        await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+
+    with pytest.raises(SendMessageCircuitBreakerStop):
+        await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+
+    assert len(channel.sent) == 2
+    assert channel.message_by_id[102].reactions == [
+        app_mod.WARNING_REACTION_EMOJI,
+        app_mod.ERROR_REACTION_EMOJI,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_process_event_resets_send_message_circuit_breaker_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeMessageable:
+        pass
+
+    class FakeSentMessage:
+        def __init__(self, message_id: int) -> None:
+            self.id = message_id
+            self.reactions: list[str] = []
+
+        async def add_reaction(self, emoji: str) -> None:
+            self.reactions.append(emoji)
+
+    class FakeChannel(FakeMessageable):
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.message_by_id: dict[int, FakeSentMessage] = {}
+
+        async def send(self, text: str) -> FakeSentMessage:
+            self.sent.append(text)
+            msg = FakeSentMessage(100 + len(self.sent))
+            self.message_by_id[msg.id] = msg
+            return msg
+
+        async def fetch_message(self, message_id: int) -> FakeSentMessage:
+            return self.message_by_id[message_id]
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    monkeypatch.setattr(app_mod.discord.abc, "Messageable", FakeMessageable)
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    text = "status-update " + ("x" * 400)
+
+    class FakeAgent:
+        async def ainvoke(self, _: dict[str, Any]) -> dict[str, Any]:
+            await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+            await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+            await tools["send_message"].ainvoke({"text": text, "channel_id": "123"})
+            return {"messages": []}
+
+    app.agent = FakeAgent()
+    await app._process_event(
+        app_mod.AgentEvent(
+            event_type="loop-breaker-reset",
+            prompt="trigger",
+            channel_id="123",
+            author="alice",
+        ),
+    )
+
+    assert app._send_message_circuit_breaker_active is False
+    assert app._send_message_similarity_streak == 0
+    assert app._send_message_last_text_normalized is None
+    assert app._send_message_warning_reaction_sent is False
+
+    result = await tools["send_message"].ainvoke(
+        {"text": "one fresh outbound message", "channel_id": "123"},
+    )
+    assert "sent=True" in result
+    assert len(channel.sent) == 3
 
 
 @pytest.mark.asyncio
