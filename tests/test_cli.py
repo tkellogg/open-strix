@@ -42,12 +42,11 @@ def test_cli_no_args_does_not_auto_setup_when_not_git(
     assert called["run_home"] is None
 
 
-def test_setup_home_github_missing_user_continues_without_github(
+def test_setup_home_github_missing_raises_with_install_guidance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = tmp_path / "agent-home"
-    called: dict[str, bool] = {"github_remote": False}
 
     def fake_which(name: str) -> str | None:
         if name == "git":
@@ -59,55 +58,8 @@ def test_setup_home_github_missing_user_continues_without_github(
         return None
 
     monkeypatch.setattr(cli_mod.shutil, "which", fake_which)
-    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda _: "3")
-    monkeypatch.setattr(cli_mod, "_ensure_git_repo", lambda _: None)
-    monkeypatch.setattr(cli_mod, "_ensure_git_identity", lambda _: None)
-    monkeypatch.setattr(cli_mod, "_ensure_uv_project", lambda _: None)
-    monkeypatch.setattr(cli_mod, "_ensure_git_remote", lambda **_: None)
-    monkeypatch.setattr(cli_mod, "bootstrap_home_repo", lambda **_: None)
-    monkeypatch.setattr(cli_mod, "_print_setup_walkthrough", lambda _: None)
-    monkeypatch.setattr(
-        cli_mod,
-        "_ensure_github_remote",
-        lambda **_: called.__setitem__("github_remote", True),
-    )
-
-    cli_mod.setup_home(home=home, github=True, repo_name=None)
-
-    assert called["github_remote"] is False
-    assert (home / ".env").exists()
-
-
-def test_setup_home_github_missing_user_abandons(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "agent-home"
-    called: dict[str, bool] = {"ensure_git_repo": False}
-
-    def fake_which(name: str) -> str | None:
-        if name == "git":
-            return "/usr/bin/git"
-        if name == "uv":
-            return "/usr/bin/uv"
-        if name == "gh":
-            return None
-        return None
-
-    monkeypatch.setattr(cli_mod.shutil, "which", fake_which)
-    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda _: "2")
-    monkeypatch.setattr(
-        cli_mod,
-        "_ensure_git_repo",
-        lambda _: called.__setitem__("ensure_git_repo", True),
-    )
-
-    with pytest.raises(RuntimeError, match="aborted"):
+    with pytest.raises(RuntimeError, match="Install GitHub CLI"):
         cli_mod.setup_home(home=home, github=True, repo_name=None)
-
-    assert called["ensure_git_repo"] is False
 
 
 def test_setup_home_requires_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -318,65 +318,16 @@ def _ensure_git_remote(home: Path, *, github: bool = False, repo_name: str | Non
     _ensure_git_push_defaults(home)
 
 
-def _resolve_missing_gh_behavior() -> bool:
-    """Handle --github when gh is missing.
-
-    Returns:
-        True if setup should continue with GitHub remote setup.
-        False if setup should continue without GitHub remote setup.
-
-    Raises:
-        RuntimeError: If user chooses to abort or prompt is unavailable.
-    """
-    if shutil.which("gh") is not None:
-        return True
-
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            "`gh` is required for --github but was not found, and setup is non-interactive. "
-            "Install gh first or rerun setup without --github.",
-        )
-
-    print("`gh` is required for --github but was not found.", flush=True)
-    print("Choose one:", flush=True)
-    print("  1) Wait while I install gh, then retry", flush=True)
-    print("  2) Abandon setup", flush=True)
-    print("  3) Continue setup without GitHub remote", flush=True)
-
-    while True:
-        try:
-            choice = input("Enter 1, 2, or 3: ").strip()
-        except EOFError as exc:
-            raise RuntimeError("Setup aborted: input stream closed.") from exc
-        except KeyboardInterrupt as exc:
-            raise RuntimeError("Setup aborted by user.") from exc
-
-        if choice == "1":
-            while True:
-                if shutil.which("gh") is not None:
-                    print("Detected gh. Continuing with GitHub setup.", flush=True)
-                    return True
-                try:
-                    retry = input(
-                        "gh still not found. Press Enter to retry, or type 2 to abandon, 3 to continue without GitHub: ",
-                    ).strip()
-                except EOFError as exc:
-                    raise RuntimeError("Setup aborted: input stream closed.") from exc
-                except KeyboardInterrupt as exc:
-                    raise RuntimeError("Setup aborted by user.") from exc
-
-                if retry == "2":
-                    raise RuntimeError("Setup aborted by user.")
-                if retry == "3":
-                    return False
-                if retry:
-                    print("Please enter 2, 3, or press Enter.", flush=True)
-        elif choice == "2":
-            raise RuntimeError("Setup aborted by user.")
-        elif choice == "3":
-            return False
-        else:
-            print("Invalid choice. Enter 1, 2, or 3.", flush=True)
+def _raise_missing_gh_install_instructions() -> None:
+    raise RuntimeError(
+        "`gh` is required for --github but was not found in PATH.\n"
+        "Install GitHub CLI, then rerun setup.\n"
+        "Examples:\n"
+        "  macOS (Homebrew): brew install gh\n"
+        "  Ubuntu/Debian:     sudo apt install gh\n"
+        "  Windows (winget):  winget install --id GitHub.cli\n"
+        "Docs: https://cli.github.com/",
+    )
 
 
 def setup_home(home: Path, *, github: bool = False, repo_name: str | None = None) -> None:
@@ -389,7 +340,7 @@ def setup_home(home: Path, *, github: bool = False, repo_name: str | None = None
     home.mkdir(parents=True, exist_ok=True)
 
     if github and shutil.which("gh") is None:
-        github = _resolve_missing_gh_behavior()
+        _raise_missing_gh_install_instructions()
 
     _ensure_git_repo(home)
     _ensure_git_identity(home)
