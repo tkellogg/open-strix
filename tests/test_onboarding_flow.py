@@ -69,6 +69,10 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     assert "git_sync_after_turn" not in config_text
     assert "skills_sources" not in config_text
 
+    scheduler_text = (home / "scheduler.yaml").read_text(encoding="utf-8")
+    assert "prediction-review-twice-daily" in scheduler_text
+    assert 'cron: "0 9,21 * * *"' in scheduler_text
+
     # Second run should be idempotent and still work.
     second_run = _run(["uv", "run", "open-strix"], cwd=home, env=env, stdin="")
     assert "No Discord token configured. Running in stdin mode." in second_run.stdout

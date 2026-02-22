@@ -21,7 +21,16 @@ always_respond_bot_ids: []
 """
 
 DEFAULT_SCHEDULER = """\
-jobs: []
+jobs:
+  - name: prediction-review-twice-daily
+    cron: "0 9,21 * * *"
+    prompt: |
+      Run the prediction-review skill.
+      Review journal predictions from 2-3 days ago.
+      Use `logs/events.jsonl` and Discord history as ground truth.
+      For each reviewed prediction, append a structured entry:
+      `uv run python scripts/prediction_review_log.py --prediction-datetime ... --is-true ... --comments ...`
+      Include evidence and behavior adjustments in comments.
 """
 
 DEFAULT_PRE_COMMIT_SCRIPT = """\

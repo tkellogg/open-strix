@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 
 import pytest
+import yaml
 
 import open_strix.cli as cli_mod
 
@@ -120,6 +121,18 @@ def test_cli_setup_scaffolds_home(tmp_path: Path) -> None:
     assert "ANTHROPIC_API_KEY=" in env_text
     assert "TAVILY_API_KEY=" in env_text
     assert "DISCORD_TOKEN=" in env_text
+
+    scheduler = yaml.safe_load((home / "scheduler.yaml").read_text(encoding="utf-8"))
+    assert isinstance(scheduler, dict)
+    jobs = scheduler.get("jobs", [])
+    assert isinstance(jobs, list)
+    prediction_job = next(
+        (job for job in jobs if isinstance(job, dict) and job.get("name") == "prediction-review-twice-daily"),
+        None,
+    )
+    assert prediction_job is not None
+    assert prediction_job.get("cron") == "0 9,21 * * *"
+    assert "prediction-review skill" in str(prediction_job.get("prompt", ""))
 
     # Idempotent: second setup run should preserve existing files and not fail.
     cli_mod.main(["setup", "--home", str(home)])

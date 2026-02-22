@@ -281,6 +281,7 @@ Related files:
 Runtime behavior note:
 
 - Git sync (`git add -A` -> commit -> push) runs automatically after each processed turn.
+- New agent homes are seeded with a twice-daily UTC scheduler job (`09:00` and `21:00`) for prediction-review calibration.
 
 ## Personality bootstrap
 
