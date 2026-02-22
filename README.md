@@ -51,6 +51,10 @@ Run setup explicitly first (`uvx open-strix setup ...`), then run `uv run open-s
 It also runs:
 - `uv init --bare --python 3.11 --vcs none --no-workspace`
 - `uv add open-strix`
+- checks git commit identity and, if missing, prompts for:
+  - `user.name` (defaults to directory name)
+  - `user.email`
+- checks git remote and, if `origin` is missing, prompts for the remote URL
 
 It also prints a CLI walkthrough with links and step-by-step setup for:
 - MiniMax M2.5

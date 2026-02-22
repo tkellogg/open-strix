@@ -62,7 +62,9 @@ def test_setup_home_github_missing_user_continues_without_github(
     monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _: "3")
     monkeypatch.setattr(cli_mod, "_ensure_git_repo", lambda _: None)
+    monkeypatch.setattr(cli_mod, "_ensure_git_identity", lambda _: None)
     monkeypatch.setattr(cli_mod, "_ensure_uv_project", lambda _: None)
+    monkeypatch.setattr(cli_mod, "_ensure_git_remote", lambda **_: None)
     monkeypatch.setattr(cli_mod, "bootstrap_home_repo", lambda **_: None)
     monkeypatch.setattr(cli_mod, "_print_setup_walkthrough", lambda _: None)
     monkeypatch.setattr(
@@ -124,9 +126,134 @@ def test_setup_home_requires_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         cli_mod.setup_home(home=home, github=False, repo_name=None)
 
 
-def test_cli_setup_scaffolds_home(tmp_path: Path) -> None:
+def test_ensure_git_identity_prompts_and_uses_default_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    writes: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(cli_mod, "_git_config_get", lambda *_: "")
+    monkeypatch.setattr(cli_mod, "_git_config_set", lambda _home, key, value: writes.append((key, value)))
+    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: True)
+    responses = iter(["", "agent-home@example.com"])
+    monkeypatch.setattr("builtins.input", lambda _: next(responses))
+
+    cli_mod._ensure_git_identity(home)
+
+    assert writes == [
+        ("user.name", "agent-home"),
+        ("user.email", "agent-home@example.com"),
+    ]
+
+
+def test_ensure_git_identity_non_interactive_missing_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli_mod, "_git_config_get", lambda *_: "")
+    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: False)
+
+    with pytest.raises(RuntimeError, match="Git identity is not configured"):
+        cli_mod._ensure_git_identity(home)
+
+
+def test_ensure_git_identity_skips_prompt_when_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+
+    def fake_get(_: Path, key: str) -> str:
+        if key == "user.name":
+            return "Agent"
+        if key == "user.email":
+            return "agent@example.com"
+        return ""
+
+    monkeypatch.setattr(cli_mod, "_git_config_get", fake_get)
+    monkeypatch.setattr(
+        cli_mod,
+        "_git_config_set",
+        lambda *_: (_ for _ in ()).throw(AssertionError("_git_config_set should not be called")),
+    )
+    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: False)
+
+    cli_mod._ensure_git_identity(home)
+
+
+def test_ensure_git_remote_prompts_and_sets_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(cli_mod, "_git_origin_remote_url", lambda _: "")
+    monkeypatch.setattr(cli_mod, "_git_remote_add_origin", lambda _home, url: calls.append(("remote", url)))
+    monkeypatch.setattr(cli_mod, "_ensure_git_push_defaults", lambda _home: calls.append(("push_defaults", "ok")))
+    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: "https://github.com/example/agent-home.git")
+
+    cli_mod._ensure_git_remote(home, github=False, repo_name=None)
+
+    assert calls == [
+        ("remote", "https://github.com/example/agent-home.git"),
+        ("push_defaults", "ok"),
+    ]
+
+
+def test_ensure_git_remote_non_interactive_missing_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli_mod, "_git_origin_remote_url", lambda _: "")
+    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: False)
+
+    with pytest.raises(RuntimeError, match="Git remote `origin` is not configured"):
+        cli_mod._ensure_git_remote(home, github=False, repo_name=None)
+
+
+def test_ensure_git_remote_uses_existing_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    observed: list[str] = []
+
+    monkeypatch.setattr(cli_mod, "_git_origin_remote_url", lambda _: "git@github.com:example/repo.git")
+    monkeypatch.setattr(cli_mod, "_ensure_git_push_defaults", lambda _: observed.append("push_defaults"))
+    monkeypatch.setattr(
+        cli_mod,
+        "_git_remote_add_origin",
+        lambda *_: (_ for _ in ()).throw(AssertionError("_git_remote_add_origin should not be called")),
+    )
+
+    cli_mod._ensure_git_remote(home, github=False, repo_name=None)
+    assert observed == ["push_defaults"]
+
+
+def test_cli_setup_scaffolds_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     if shutil.which("git") is None or shutil.which("uv") is None:
         pytest.skip("git/uv are not installed")
+
+    responses = iter(
+        [
+            "agent-home",
+            "agent-home@example.com",
+            "https://github.com/example/agent-home.git",
+        ],
+    )
+    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: next(responses))
 
     home = tmp_path / "agent-home"
     cli_mod.main(["setup", "--home", str(home)])
@@ -163,9 +290,23 @@ def test_cli_setup_scaffolds_home(tmp_path: Path) -> None:
     assert (home / "config.yaml").exists()
 
 
-def test_cli_setup_prints_walkthrough(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_setup_prints_walkthrough(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     if shutil.which("git") is None or shutil.which("uv") is None:
         pytest.skip("git/uv are not installed")
+
+    responses = iter(
+        [
+            "walkthrough-home",
+            "walkthrough-home@example.com",
+            "https://github.com/example/walkthrough-home.git",
+        ],
+    )
+    monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: next(responses))
 
     home = tmp_path / "walkthrough-home"
     cli_mod.main(["setup", "--home", str(home)])

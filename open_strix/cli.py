@@ -128,6 +128,78 @@ def _ensure_git_repo(home: Path) -> None:
     _run_command(["git", "branch", "-M", "main"], cwd=home)
 
 
+def _git_config_get(home: Path, key: str) -> str:
+    proc = _run_command(["git", "config", "--get", key], cwd=home)
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def _git_config_set(home: Path, key: str, value: str) -> None:
+    proc = _run_command(["git", "config", key, value], cwd=home)
+    if proc.returncode != 0:
+        message = proc.stderr.strip() or proc.stdout.strip() or "unknown error"
+        raise RuntimeError(f"git config {key} failed: {message}")
+
+
+def _ensure_git_identity(home: Path) -> None:
+    existing_name = _git_config_get(home, "user.name")
+    existing_email = _git_config_get(home, "user.email")
+    if existing_name and existing_email:
+        return
+
+    if not sys.stdin.isatty():
+        missing: list[str] = []
+        if not existing_name:
+            missing.append("user.name")
+        if not existing_email:
+            missing.append("user.email")
+        raise RuntimeError(
+            "Git identity is not configured ({missing}). "
+            "Run `open-strix setup` interactively to provide git commit identity.".format(
+                missing=", ".join(missing),
+            ),
+        )
+
+    default_name = existing_name or home.name
+    print(
+        "Git commit identity is missing for this repo. "
+        "Provide values to avoid commit failures.",
+        flush=True,
+    )
+
+    try:
+        raw_name = input(f"Git commit user name [{default_name}]: ").strip()
+    except EOFError as exc:
+        raise RuntimeError("Setup aborted: input stream closed.") from exc
+    except KeyboardInterrupt as exc:
+        raise RuntimeError("Setup aborted by user.") from exc
+    resolved_name = raw_name or default_name
+    if not resolved_name:
+        raise RuntimeError("Git commit user name cannot be empty.")
+
+    email_default = existing_email
+    while True:
+        email_prompt = (
+            f"Git commit email [{email_default}]: "
+            if email_default
+            else "Git commit email: "
+        )
+        try:
+            raw_email = input(email_prompt).strip()
+        except EOFError as exc:
+            raise RuntimeError("Setup aborted: input stream closed.") from exc
+        except KeyboardInterrupt as exc:
+            raise RuntimeError("Setup aborted by user.") from exc
+        resolved_email = raw_email or email_default
+        if resolved_email and "@" in resolved_email:
+            break
+        print("Please enter a valid email address.", flush=True)
+
+    _git_config_set(home, "user.name", resolved_name)
+    _git_config_set(home, "user.email", resolved_email)
+
+
 def _ensure_initial_commit(home: Path) -> bool:
     add_proc = _run_command(["git", "add", "-A"], cwd=home)
     if add_proc.returncode != 0:
@@ -178,6 +250,72 @@ def _ensure_github_remote(home: Path, repo_name: str | None = None) -> None:
             print(f"GitHub remote created, but initial push failed: {push_proc.stderr.strip()}", flush=True)
     else:
         print("GitHub remote created. Initial commit/push skipped (check git user.name/user.email).", flush=True)
+
+
+def _git_origin_remote_url(home: Path) -> str:
+    proc = _run_command(["git", "remote", "get-url", "origin"], cwd=home)
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def _git_remote_add_origin(home: Path, remote_url: str) -> None:
+    proc = _run_command(["git", "remote", "add", "origin", remote_url], cwd=home)
+    if proc.returncode != 0:
+        message = proc.stderr.strip() or proc.stdout.strip() or "unknown error"
+        raise RuntimeError(f"git remote add origin failed: {message}")
+
+
+def _ensure_git_push_defaults(home: Path) -> None:
+    # Make plain `git push` work predictably in this repo.
+    if not _git_config_get(home, "remote.pushDefault"):
+        _git_config_set(home, "remote.pushDefault", "origin")
+    if not _git_config_get(home, "push.default"):
+        _git_config_set(home, "push.default", "current")
+    if not _git_config_get(home, "push.autoSetupRemote"):
+        _git_config_set(home, "push.autoSetupRemote", "true")
+
+
+def _ensure_git_remote(home: Path, *, github: bool = False, repo_name: str | None = None) -> None:
+    existing_origin = _git_origin_remote_url(home)
+    if existing_origin:
+        _ensure_git_push_defaults(home)
+        return
+
+    if github:
+        _ensure_github_remote(home=home, repo_name=repo_name)
+        existing_origin = _git_origin_remote_url(home)
+        if existing_origin:
+            _ensure_git_push_defaults(home)
+            return
+
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "Git remote `origin` is not configured. Run setup interactively to provide a remote URL "
+            "or rerun with --github after installing/authenticating `gh`.",
+        )
+
+    print(
+        "Git remote `origin` is missing. open-strix auto-push needs a remote destination.",
+        flush=True,
+    )
+    print(
+        "Enter a remote URL (example: git@github.com:you/repo.git or https://github.com/you/repo.git).",
+        flush=True,
+    )
+    while True:
+        try:
+            remote_url = input("Origin remote URL: ").strip()
+        except EOFError as exc:
+            raise RuntimeError("Setup aborted: input stream closed.") from exc
+        except KeyboardInterrupt as exc:
+            raise RuntimeError("Setup aborted by user.") from exc
+        if remote_url:
+            break
+        print("Origin remote URL is required.", flush=True)
+
+    _git_remote_add_origin(home, remote_url)
+    _ensure_git_push_defaults(home)
 
 
 def _resolve_missing_gh_behavior() -> bool:
@@ -254,14 +392,14 @@ def setup_home(home: Path, *, github: bool = False, repo_name: str | None = None
         github = _resolve_missing_gh_behavior()
 
     _ensure_git_repo(home)
+    _ensure_git_identity(home)
     _ensure_uv_project(home)
 
     layout = RepoLayout(home=home, state_dir_name=STATE_DIR_NAME)
     bootstrap_home_repo(layout=layout, checkpoint_text=DEFAULT_CHECKPOINT)
     _write_if_missing(home / ".env", DEFAULT_ENV)
 
-    if github:
-        _ensure_github_remote(home=home, repo_name=repo_name)
+    _ensure_git_remote(home=home, github=github, repo_name=repo_name)
 
     print(f"open-strix setup complete: {home}", flush=True)
     _print_setup_walkthrough(home)
