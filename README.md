@@ -29,10 +29,10 @@ Official install docs (alternate methods like Homebrew, pipx, winget):
 ```bash
 uvx open-strix setup --home my-agent --github
 cd my-agent
-uvx open-strix
+uv run open-strix
 ```
 
-Run setup explicitly first (`uvx open-strix setup ...`), then run `uvx open-strix`.
+Run setup explicitly first (`uvx open-strix setup ...`), then run `uv run open-strix` from inside that home.
 
 `open-strix setup` bootstraps the target directory with:
 
@@ -44,7 +44,13 @@ Run setup explicitly first (`uvx open-strix setup ...`), then run `uvx open-stri
 - `scheduler.yaml`
 - `config.yaml`
 - `checkpoint.md`
+- `pyproject.toml`
+- `uv.lock`
 - `.env` (template)
+
+It also runs:
+- `uv init --bare --python 3.11 --vcs none --no-workspace`
+- `uv add open-strix`
 
 It also prints a CLI walkthrough with links and step-by-step setup for:
 - MiniMax M2.5
@@ -52,7 +58,7 @@ It also prints a CLI walkthrough with links and step-by-step setup for:
 - Discord bot creation + permissions
 - `config.yaml` values
 
-Then `uvx open-strix` connects to Discord if a token is present (by default `DISCORD_TOKEN`).
+Then `uv run open-strix` connects to Discord if a token is present (by default `DISCORD_TOKEN`).
 Otherwise it runs in local stdin mode.
 
 ## Installed mode (optional)

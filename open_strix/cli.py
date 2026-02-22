@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 from textwrap import dedent
+import tomllib
 from typing import Sequence
 
 from .app import run_open_strix
@@ -56,6 +58,60 @@ def _run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=False,
     )
+
+
+def _normalize_distribution_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).lower().strip()
+
+
+def _requirement_distribution_name(requirement: str) -> str:
+    text = requirement.split(";", maxsplit=1)[0].strip()
+    match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", text)
+    if match is None:
+        return ""
+    return _normalize_distribution_name(match.group(1))
+
+
+def _project_depends_on_open_strix(pyproject_path: Path) -> bool:
+    if not pyproject_path.exists():
+        return False
+    try:
+        loaded = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+
+    project = loaded.get("project", {})
+    if not isinstance(project, dict):
+        return False
+    dependencies = project.get("dependencies", [])
+    if not isinstance(dependencies, list):
+        return False
+
+    for raw in dependencies:
+        dep_name = _requirement_distribution_name(str(raw))
+        if dep_name == "open-strix":
+            return True
+    return False
+
+
+def _ensure_uv_project(home: Path) -> None:
+    pyproject_path = home / "pyproject.toml"
+    if not pyproject_path.exists():
+        init_proc = _run_command(
+            ["uv", "init", "--bare", "--python", "3.11", "--vcs", "none", "--no-workspace"],
+            cwd=home,
+        )
+        if init_proc.returncode != 0:
+            message = init_proc.stderr.strip() or init_proc.stdout.strip() or "unknown error"
+            raise RuntimeError(f"uv init failed: {message}")
+
+    if _project_depends_on_open_strix(pyproject_path):
+        return
+
+    add_proc = _run_command(["uv", "add", "open-strix"], cwd=home)
+    if add_proc.returncode != 0:
+        message = add_proc.stderr.strip() or add_proc.stdout.strip() or "unknown error"
+        raise RuntimeError(f"uv add open-strix failed: {message}")
 
 
 def _ensure_git_repo(home: Path) -> None:
@@ -188,6 +244,8 @@ def _resolve_missing_gh_behavior() -> bool:
 def setup_home(home: Path, *, github: bool = False, repo_name: str | None = None) -> None:
     if shutil.which("git") is None:
         raise RuntimeError("`git` is required for setup but was not found in PATH.")
+    if shutil.which("uv") is None:
+        raise RuntimeError("`uv` is required for setup but was not found in PATH.")
 
     home = home.resolve()
     home.mkdir(parents=True, exist_ok=True)
@@ -196,6 +254,7 @@ def setup_home(home: Path, *, github: bool = False, repo_name: str | None = None
         github = _resolve_missing_gh_behavior()
 
     _ensure_git_repo(home)
+    _ensure_uv_project(home)
 
     layout = RepoLayout(home=home, state_dir_name=STATE_DIR_NAME)
     bootstrap_home_repo(layout=layout, checkpoint_text=DEFAULT_CHECKPOINT)
@@ -253,8 +312,9 @@ def _print_setup_walkthrough(home: Path) -> None:
         - Installation: set Install Link to None, then save.
         - OAuth2 -> URL Generator:
           - check `bot`
-          - choose practical bot permissions (focus on messaging/reactions/history/attachments):
-            View Channels, Send Messages, Send Messages in Threads, Read Message History, Add Reactions, Attach Files.
+          - choose practical bot permissions (Most things from Text Permissions):
+            View Channels, Send Messages, Send Messages in Threads, Read Message History, Add Reactions, Attach Files, Create Threads, Attach Files, Embed Links.
+          - Copy URL and paste into your browser where you're logged into Discord. Select a server, Continue, Authorize. Might as well start a DM with the bot now.
         - Bot tab:
           - disable Public Bot
           - enable Message Content Intent
@@ -277,7 +337,7 @@ def _print_setup_walkthrough(home: Path) -> None:
         - always_respond_bot_ids: bot IDs this agent is allowed to respond to
 
         5) Run
-        - start agent: uvx open-strix
+        - start agent: uv run open-strix
         - if no token is set, open-strix runs stdin mode.
         """
     ).strip("\n")
@@ -293,7 +353,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     setup_parser = subparsers.add_parser(
         "setup",
-        help="Scaffold an open-strix home (git + config + state + .env).",
+        help="Scaffold an open-strix home (uv project + git + config + state + .env).",
     )
     setup_parser.add_argument(
         "--home",

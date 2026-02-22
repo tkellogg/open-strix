@@ -52,6 +52,8 @@ def test_setup_home_github_missing_user_continues_without_github(
     def fake_which(name: str) -> str | None:
         if name == "git":
             return "/usr/bin/git"
+        if name == "uv":
+            return "/usr/bin/uv"
         if name == "gh":
             return None
         return None
@@ -60,6 +62,7 @@ def test_setup_home_github_missing_user_continues_without_github(
     monkeypatch.setattr(cli_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _: "3")
     monkeypatch.setattr(cli_mod, "_ensure_git_repo", lambda _: None)
+    monkeypatch.setattr(cli_mod, "_ensure_uv_project", lambda _: None)
     monkeypatch.setattr(cli_mod, "bootstrap_home_repo", lambda **_: None)
     monkeypatch.setattr(cli_mod, "_print_setup_walkthrough", lambda _: None)
     monkeypatch.setattr(
@@ -84,6 +87,8 @@ def test_setup_home_github_missing_user_abandons(
     def fake_which(name: str) -> str | None:
         if name == "git":
             return "/usr/bin/git"
+        if name == "uv":
+            return "/usr/bin/uv"
         if name == "gh":
             return None
         return None
@@ -103,9 +108,25 @@ def test_setup_home_github_missing_user_abandons(
     assert called["ensure_git_repo"] is False
 
 
+def test_setup_home_requires_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "agent-home"
+
+    def fake_which(name: str) -> str | None:
+        if name == "git":
+            return "/usr/bin/git"
+        if name == "uv":
+            return None
+        return None
+
+    monkeypatch.setattr(cli_mod.shutil, "which", fake_which)
+
+    with pytest.raises(RuntimeError, match="`uv` is required"):
+        cli_mod.setup_home(home=home, github=False, repo_name=None)
+
+
 def test_cli_setup_scaffolds_home(tmp_path: Path) -> None:
-    if shutil.which("git") is None:
-        pytest.skip("git is not installed")
+    if shutil.which("git") is None or shutil.which("uv") is None:
+        pytest.skip("git/uv are not installed")
 
     home = tmp_path / "agent-home"
     cli_mod.main(["setup", "--home", str(home)])
@@ -114,6 +135,7 @@ def test_cli_setup_scaffolds_home(tmp_path: Path) -> None:
     assert (home / "config.yaml").exists()
     assert (home / "scheduler.yaml").exists()
     assert (home / "checkpoint.md").exists()
+    assert (home / "pyproject.toml").exists()
     assert (home / "state" / ".gitkeep").exists()
     assert (home / ".env").exists()
 
@@ -121,6 +143,8 @@ def test_cli_setup_scaffolds_home(tmp_path: Path) -> None:
     assert "ANTHROPIC_API_KEY=" in env_text
     assert "TAVILY_API_KEY=" in env_text
     assert "DISCORD_TOKEN=" in env_text
+    pyproject_text = (home / "pyproject.toml").read_text(encoding="utf-8")
+    assert "open-strix" in pyproject_text
 
     scheduler = yaml.safe_load((home / "scheduler.yaml").read_text(encoding="utf-8"))
     assert isinstance(scheduler, dict)
@@ -140,8 +164,8 @@ def test_cli_setup_scaffolds_home(tmp_path: Path) -> None:
 
 
 def test_cli_setup_prints_walkthrough(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    if shutil.which("git") is None:
-        pytest.skip("git is not installed")
+    if shutil.which("git") is None or shutil.which("uv") is None:
+        pytest.skip("git/uv are not installed")
 
     home = tmp_path / "walkthrough-home"
     cli_mod.main(["setup", "--home", str(home)])
