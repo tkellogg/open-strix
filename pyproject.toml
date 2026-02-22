@@ -1,6 +1,6 @@
 [project]
 name = "open-strix"
-version = "0.1.14"
+version = "0.1.15"
 description = "Minimal autonomous agent harness with LangGraph Deep Agents"
 readme = "README.md"
 requires-python = ">=3.11"
