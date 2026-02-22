@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from .builtin_skills import BUILTIN_HELPER_SCRIPTS
+
 DEFAULT_MODEL = "MiniMax-M2.5"
 DEFAULT_MODEL_PROVIDER = "anthropic"
 STATE_DIR_NAME = "state"
@@ -168,6 +170,8 @@ def bootstrap_home_repo(layout: RepoLayout, checkpoint_text: str) -> None:
     _write_if_missing(layout.scheduler_file, DEFAULT_SCHEDULER)
     _write_if_missing(layout.checkpoint_file, checkpoint_text)
     _write_if_missing(layout.scripts_dir / "pre_commit.py", DEFAULT_PRE_COMMIT_SCRIPT)
+    for script_name, script_body in BUILTIN_HELPER_SCRIPTS.items():
+        _write_if_missing(layout.scripts_dir / script_name, script_body)
     layout.events_log.touch(exist_ok=True)
     layout.journal_log.touch(exist_ok=True)
     _install_git_hook(layout.home)

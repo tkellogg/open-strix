@@ -42,6 +42,7 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
         home / "config.yaml",
         home / "checkpoint.md",
         home / "scripts" / "pre_commit.py",
+        home / "scripts" / "prediction_review_log.py",
         home / ".git" / "hooks" / "pre-commit",
     ]
     missing = [path for path in expected_paths if not path.exists()]

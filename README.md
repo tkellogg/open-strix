@@ -273,8 +273,10 @@ Related files:
 - `scheduler.yaml`: cron/time-of-day jobs
 - `blocks/*.yaml`: memory blocks surfaced in prompt context
 - `checkpoint.md`: returned by `journal` tool after a journal write
+- `scripts/prediction_review_log.py`: helper for structured prediction-accuracy reviews
 - `skills/`: user-editable local skills
 - `/.open_strix_builtin_skills/skill-creator/SKILL.md`: packaged built-in skill source mounted as read-only
+- `/.open_strix_builtin_skills/prediction-review/SKILL.md`: packaged built-in skill for prediction calibration
 
 Runtime behavior note:
 
