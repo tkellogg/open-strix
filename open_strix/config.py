@@ -254,7 +254,23 @@ exit 1
 
 def _ensure_logs_ignored(home: Path) -> None:
     gitignore_path = home / ".gitignore"
-    required_entries = ["logs/", ".env", f"{BUILTIN_HOME_DIRNAME}/"]
+    required_entries = [
+        "logs/",
+        ".env",
+        f"{BUILTIN_HOME_DIRNAME}/",
+        "*.png",
+        "*.jpg",
+        "*.jpeg",
+        "*.gif",
+        "*.webp",
+        "*.svg",
+        "*.bmp",
+        "*.tif",
+        "*.tiff",
+        "*.avif",
+        "*.heic",
+        "*.ico",
+    ]
     if not gitignore_path.exists():
         gitignore_path.write_text("\n".join(required_entries) + "\n", encoding="utf-8")
         return

@@ -61,6 +61,9 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     }
     assert "logs/" in gitignore_lines
     assert ".env" in gitignore_lines
+    assert "*.png" in gitignore_lines
+    assert "*.jpg" in gitignore_lines
+    assert "*.jpeg" in gitignore_lines
 
     config_text = (home / "config.yaml").read_text(encoding="utf-8")
     assert "model: MiniMax-M2.5" in config_text
