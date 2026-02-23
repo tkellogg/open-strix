@@ -108,6 +108,36 @@ def _model_for_deep_agents(model_name: str) -> str:
     return f"{DEFAULT_MODEL_PROVIDER}:{cleaned}"
 
 
+def _skill_name_from_file(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return path.parent.name
+
+    lines = text.splitlines()
+    if len(lines) < 3 or lines[0].strip() != "---":
+        return path.parent.name
+
+    end_idx = -1
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            end_idx = idx
+            break
+    if end_idx <= 1:
+        return path.parent.name
+
+    frontmatter = "\n".join(lines[1:end_idx])
+    try:
+        parsed = yaml.safe_load(frontmatter)
+    except yaml.YAMLError:
+        return path.parent.name
+    if isinstance(parsed, dict):
+        name = str(parsed.get("name", "")).strip()
+        if name:
+            return name
+    return path.parent.name
+
+
 def _git_sync(home: Path) -> str:
     git_dir = home / ".git"
     if not git_dir.exists():
@@ -274,6 +304,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         # Keep built-ins last so packaged defaults win on name collision.
         skills_sources.append(BUILTIN_SKILLS_ROUTE.rstrip("/"))
         skills = skills_sources or None
+        self._log_loaded_skills(skills_sources)
 
         self.agent = create_deep_agent(
             model=model,
@@ -282,6 +313,40 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             backend=backend,
             skills=skills,
         )
+
+    def _skill_root_for_source(self, source: str) -> Path | None:
+        if source == "/skills":
+            return self.layout.skills_dir
+        if source == BUILTIN_SKILLS_ROUTE.rstrip("/"):
+            return self.home / BUILTIN_HOME_DIRNAME
+        return None
+
+    def _skills_for_source(self, source: str) -> list[tuple[str, str]]:
+        root = self._skill_root_for_source(source)
+        if root is None or not root.exists():
+            return []
+
+        rows: list[tuple[str, str]] = []
+        for skill_file in sorted(root.rglob("SKILL.md")):
+            rel_path = skill_file.relative_to(root).as_posix()
+            virtual_path = f"{source}/{rel_path}"
+            skill_name = _skill_name_from_file(skill_file)
+            rows.append((skill_name, virtual_path))
+        return rows
+
+    def _log_loaded_skills(self, skills_sources: list[str]) -> None:
+        print(
+            f"[open-strix] skills passed to deepagents: {skills_sources}",
+            flush=True,
+        )
+        print("[open-strix] discovered skill files:", flush=True)
+        for source in skills_sources:
+            rows = self._skills_for_source(source)
+            if not rows:
+                print(f"[open-strix]   {source}: (no SKILL.md files)", flush=True)
+                continue
+            for skill_name, virtual_path in rows:
+                print(f"[open-strix]   {skill_name} -> {virtual_path}", flush=True)
 
     def log_event(self, event_type: str, **payload: Any) -> None:
         record = {
@@ -447,6 +512,9 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
                 "event_type": event.event_type,
                 "prompt": event.prompt,
                 "channel_id": event.channel_id,
+                "channel_name": event.channel_name,
+                "channel_conversation_type": event.channel_conversation_type,
+                "channel_visibility": event.channel_visibility,
                 "author": event.author,
                 "attachment_names": event.attachment_names,
                 "scheduler_name": event.scheduler_name,

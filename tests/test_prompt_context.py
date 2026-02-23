@@ -59,7 +59,12 @@ def test_prompt_includes_last_n_discord_messages_only(
     messages_section = _extract_section(
         prompt,
         "3) Last Discord messages:\n",
-        "4) Current message + reply channel:",
+        "4) Discord channel context:",
+    )
+    channel_context_section = _extract_section(
+        prompt,
+        "4) Discord channel context:\n",
+        "5) Current message + reply channel:",
     )
 
     message_ids = re.findall(r"message_id=(\d+)", messages_section)
@@ -74,6 +79,10 @@ def test_prompt_includes_last_n_discord_messages_only(
         r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \(.+\) \| user-3 \| message_id=3$",
         first_line,
     )
+    assert "channel_conversation_type: unknown" in channel_context_section
+    assert "channel_visibility: unknown" in channel_context_section
+    assert "channel_name: (none)" in channel_context_section
+    assert "channel_id: 123" in channel_context_section
 
 
 def test_journal_rendering_format_and_channel_id_autofill(
@@ -124,6 +133,11 @@ def test_journal_rendering_format_and_channel_id_autofill(
         "2) Memory blocks:\n",
         "3) Last Discord messages:",
     )
+    channel_context_section = _extract_section(
+        prompt,
+        "4) Discord channel context:\n",
+        "5) Current message + reply channel:",
+    )
 
     # Journal entries are key-value blocks separated by blank lines.
     assert "timestamp: " in journal_section
@@ -136,3 +150,4 @@ def test_journal_rendering_format_and_channel_id_autofill(
     # predictions is omitted for empty values and rendered as yaml-like list when present.
     assert "predictions:\n- My aunt will appreciate it" in journal_section
     assert "memory block: style\nconcise and practical" in memory_section
+    assert "channel_id: 777" in channel_context_section

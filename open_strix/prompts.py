@@ -30,11 +30,11 @@ Flow:
 5. Write final response, this will be discarded. Your human won't see it.
 
 Communication:
-- ALWAYS use the `send_message` tool to communicate with your human! Your final response will be discarded, they can't see it!
+- Never use the final message for anything. Your human won't see it! Instead, use `send_message` and `react`.
 - Reactions are a great way to acknowledge a message, or even to add flair to the conversation.
-- Pay attention to your user's communication preferences. It's totally find to send a message, do some work, and then send another message, if that's what the moment warrants.
+- Pay attention to your user's communication preferences. It's totally fine to send a message, do some work, and then send another message, if that's what the moment warrants.
 - If something feels perplexing, search for the context! The list_messages tool is a good place to start, or search your state files.
-- In 1-1 DMs, you should *ALWAYS* acknowledge a message, either by replying via `send_message` or `react`.
+- In 1-1 DMs, you should *ALWAYS* acknowledge a message, either by reacting or replying via `send_message`.
 - Pay attention to which conversation is happening in which room, and use channel IDs correctly.
 
 Memory:
@@ -213,6 +213,35 @@ def render_current_event(event: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_channel_context(event: Mapping[str, Any]) -> str:
+    channel_name_value = event.get("channel_name")
+    channel_id_value = event.get("channel_id")
+    channel_conversation_type_value = event.get("channel_conversation_type")
+    channel_visibility_value = event.get("channel_visibility")
+
+    channel_name = str(channel_name_value).strip() if channel_name_value not in (None, "") else "(none)"
+    channel_id = str(channel_id_value).strip() if channel_id_value not in (None, "") else "unknown"
+    channel_conversation_type = (
+        str(channel_conversation_type_value).strip()
+        if channel_conversation_type_value not in (None, "")
+        else "unknown"
+    )
+    channel_visibility = (
+        str(channel_visibility_value).strip()
+        if channel_visibility_value not in (None, "")
+        else "unknown"
+    )
+
+    return "\n".join(
+        [
+            f"channel_conversation_type: {channel_conversation_type}",
+            f"channel_visibility: {channel_visibility}",
+            f"channel_name: {channel_name}",
+            f"channel_id: {channel_id}",
+        ],
+    )
+
+
 def render_turn_prompt(
     *,
     journal_entries: list[dict[str, Any]],
@@ -223,6 +252,7 @@ def render_turn_prompt(
     journals = render_journal_entries(journal_entries)
     blocks_text = render_memory_blocks(memory_blocks)
     messages_text = render_discord_messages(discord_messages)
+    channel_context_text = render_channel_context(current_event)
     current_event_text = render_current_event(current_event)
 
     return textwrap.dedent(
@@ -238,7 +268,10 @@ def render_turn_prompt(
         3) Last Discord messages:
         {messages_text}
 
-        4) Current message + reply channel:
+        4) Discord channel context:
+        {channel_context_text}
+
+        5) Current message + reply channel:
         {current_event_text}
 
         If you need to message the user, call send_message.

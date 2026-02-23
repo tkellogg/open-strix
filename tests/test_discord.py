@@ -110,6 +110,30 @@ def test_log_event_includes_stable_session_id_for_app_run(
     assert app.session_id
 
 
+def test_startup_logs_loaded_skills_for_deepagents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+    custom_skill = tmp_path / "skills" / "alpha" / "SKILL.md"
+    custom_skill.parent.mkdir(parents=True, exist_ok=True)
+    custom_skill.write_text(
+        "---\nname: alpha\n---\n\n# alpha\n",
+        encoding="utf-8",
+    )
+
+    app_mod.OpenStrixApp(tmp_path)
+    output = capsys.readouterr().out
+
+    assert "skills passed to deepagents" in output
+    assert "/skills" in output
+    assert "/.open_strix_builtin_skills" in output
+    assert "alpha -> /skills/alpha/SKILL.md" in output
+    assert "memory -> /.open_strix_builtin_skills/memory/SKILL.md" in output
+
+
 @pytest.mark.asyncio
 async def test_run_starts_discord_with_configured_token_env(
     tmp_path: Path,
@@ -170,10 +194,19 @@ async def test_handle_discord_message_queues_event_and_saves_attachments(
         def __str__(self) -> str:
             return "alice"
 
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.id = 999
+            self.name = "ops-war-room"
+            self.guild = SimpleNamespace(default_role=object())
+
+        def permissions_for(self, _: Any) -> Any:
+            return SimpleNamespace(view_channel=False)
+
     message = SimpleNamespace(
         id=12345,
         content="ping",
-        channel=SimpleNamespace(id=999),
+        channel=FakeChannel(),
         author=FakeAuthor(),
         attachments=[FakeAttachment()],
     )
@@ -183,6 +216,9 @@ async def test_handle_discord_message_queues_event_and_saves_attachments(
     queued = app.queue.get_nowait()
     assert queued.event_type == "discord_message"
     assert queued.channel_id == "999"
+    assert queued.channel_name == "ops-war-room"
+    assert queued.channel_conversation_type == "multi_user"
+    assert queued.channel_visibility == "private"
     assert queued.author == "alice"
     assert queued.attachment_names
     attachment_path = tmp_path / queued.attachment_names[0]
@@ -286,6 +322,40 @@ async def test_handle_discord_message_refreshes_prior_channel_history(
         for item in app.message_history_by_channel["999"]
     ]
     assert remembered_ids == ["101", "102", "103"]
+
+
+@pytest.mark.asyncio
+async def test_handle_discord_message_sets_dm_context_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeAuthor:
+        bot = False
+
+        def __str__(self) -> str:
+            return "alice"
+
+    message = SimpleNamespace(
+        id=12345,
+        content="ping",
+        channel=SimpleNamespace(
+            id=999,
+            type=app_mod.discord.ChannelType.private,
+        ),
+        author=FakeAuthor(),
+        attachments=[],
+    )
+
+    await app.handle_discord_message(message)
+
+    queued = app.queue.get_nowait()
+    assert queued.channel_id == "999"
+    assert queued.channel_name is None
+    assert queued.channel_conversation_type == "dm"
+    assert queued.channel_visibility == "private"
 
 
 @pytest.mark.asyncio

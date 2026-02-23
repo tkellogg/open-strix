@@ -21,6 +21,54 @@ def _utc_now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
 
 
+def _channel_conversation_type(channel: Any) -> str:
+    channel_type = getattr(channel, "type", None)
+    dm_type = getattr(discord.ChannelType, "private", None)
+    if channel_type == dm_type:
+        return "dm"
+    if isinstance(channel, discord.DMChannel):
+        return "dm"
+    return "multi_user"
+
+
+def _channel_visibility(channel: Any, conversation_type: str) -> str:
+    if conversation_type == "dm":
+        return "private"
+
+    channel_type = getattr(channel, "type", None)
+    group_type = getattr(discord.ChannelType, "group", None)
+    private_thread_type = getattr(discord.ChannelType, "private_thread", None)
+    if channel_type in {kind for kind in (group_type, private_thread_type) if kind is not None}:
+        return "private"
+
+    public_thread_type = getattr(discord.ChannelType, "public_thread", None)
+    news_thread_type = getattr(discord.ChannelType, "news_thread", None)
+    if channel_type in {
+        kind for kind in (public_thread_type, news_thread_type) if kind is not None
+    }:
+        return "public"
+
+    guild = getattr(channel, "guild", None)
+    permissions_for = getattr(channel, "permissions_for", None)
+    default_role = getattr(guild, "default_role", None)
+    if guild is not None and callable(permissions_for) and default_role is not None:
+        permissions = permissions_for(default_role)
+        can_view = getattr(permissions, "view_channel", None)
+        if can_view is None:
+            can_view = getattr(permissions, "read_messages", None)
+        if can_view is not None:
+            return "public" if bool(can_view) else "private"
+
+    return "unknown"
+
+
+def _describe_channel_context(channel: Any) -> tuple[str, str, str | None]:
+    conversation_type = _channel_conversation_type(channel)
+    visibility = _channel_visibility(channel, conversation_type)
+    channel_name = str(getattr(channel, "name", "")).strip() or None
+    return conversation_type, visibility, channel_name
+
+
 def _chunk_discord_message(text: str, limit: int = DISCORD_MESSAGE_CHAR_LIMIT) -> list[str]:
     if limit <= 0:
         limit = DISCORD_MESSAGE_CHAR_LIMIT
@@ -174,6 +222,9 @@ class DiscordMixin:
             before_message_id=str(message.id),
         )
         attachment_names = await self._save_attachments(message)
+        channel_conversation_type, channel_visibility, channel_name = _describe_channel_context(
+            message.channel,
+        )
         prompt = (message.content or "").strip()
         if not prompt:
             prompt = "User sent a message with no text."
@@ -195,6 +246,9 @@ class DiscordMixin:
             author=str(message.author),
             author_id=author_id,
             author_is_bot=author_is_bot,
+            channel_name=channel_name,
+            channel_conversation_type=channel_conversation_type,
+            channel_visibility=channel_visibility,
             attachment_names=attachment_names,
             source_id=str(message.id),
         )
@@ -203,6 +257,9 @@ class DiscordMixin:
                 event_type="discord_message",
                 prompt=prompt,
                 channel_id=str(message.channel.id),
+                channel_name=channel_name,
+                channel_conversation_type=channel_conversation_type,
+                channel_visibility=channel_visibility,
                 author=str(message.author),
                 author_id=author_id,
                 attachment_names=attachment_names,
