@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from uuid import uuid4
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -22,6 +23,7 @@ from deepagents.backends.protocol import EditResult, FileUploadResponse, WriteRe
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
 
+from .builtin_skills import BUILTIN_HOME_DIRNAME
 from .config import (
     DEFAULT_CONFIG,
     DEFAULT_MODEL,
@@ -239,6 +241,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.scheduler = AsyncIOScheduler(timezone=UTC)
         self.pending_scheduler_keys: set[str] = set()
         self.current_channel_id: str | None = None
+        self.session_id = f"{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
 
         self.message_history_all: deque[dict[str, Any]] = deque(maxlen=500)
         self.message_history_by_channel: dict[str, deque[dict[str, Any]]] = defaultdict(
@@ -259,7 +262,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self._send_message_warning_reaction_sent = False
 
         mutable_backend = StateWriteGuardBackend(root_dir=self.home, state_dir=STATE_DIR_NAME)
-        builtin_backend = build_builtin_skills_backend()
+        builtin_backend = build_builtin_skills_backend(root_dir=self.home / BUILTIN_HOME_DIRNAME)
         backend = CompositeBackend(
             default=mutable_backend,
             routes={BUILTIN_SKILLS_ROUTE: builtin_backend},
@@ -284,6 +287,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         record = {
             "timestamp": utc_now_iso(),
             "type": event_type,
+            "session_id": self.session_id,
             **payload,
         }
         _append_jsonl(self.layout.events_log, record)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import subprocess
 
 import pytest
 import yaml
@@ -193,6 +194,191 @@ def test_ensure_git_remote_uses_existing_origin(
     assert observed == ["push_defaults"]
 
 
+def test_ensure_github_remote_uses_existing_repo_as_origin_when_create_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    added_origin: dict[str, str] = {}
+    push_calls: list[list[str]] = []
+
+    def fake_run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        assert cwd == home
+        if cmd[:4] == ["git", "remote", "get-url", "origin"]:
+            return subprocess.CompletedProcess(cmd, 2, "", "no origin")
+        if cmd[:3] == ["gh", "auth", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["gh", "repo", "create"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "repository already exists")
+        if cmd[:3] == ["gh", "api", "user"]:
+            return subprocess.CompletedProcess(cmd, 0, '{"login":"example"}', "")
+        if cmd[:3] == ["gh", "repo", "view"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                '{"sshUrl":"git@github.com:example/agent-home.git","url":"https://github.com/example/agent-home"}',
+                "",
+            )
+        if cmd[:3] == ["git", "push", "-u"]:
+            push_calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(cli_mod, "_run_command", fake_run_command)
+    monkeypatch.setattr(cli_mod, "_git_remote_add_origin", lambda _home, url: added_origin.__setitem__("url", url))
+    monkeypatch.setattr(cli_mod, "_ensure_initial_commit", lambda _: True)
+
+    cli_mod._ensure_github_remote(home=home, repo_name=None)
+
+    assert added_origin["url"] == "git@github.com:example/agent-home.git"
+    assert push_calls == [["git", "push", "-u", "origin", "HEAD"]]
+
+
+def test_ensure_github_remote_uses_existing_repo_without_push_when_commit_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    added_origin: dict[str, str] = {}
+    push_calls: list[list[str]] = []
+
+    def fake_run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        assert cwd == home
+        if cmd[:4] == ["git", "remote", "get-url", "origin"]:
+            return subprocess.CompletedProcess(cmd, 2, "", "no origin")
+        if cmd[:3] == ["gh", "auth", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["gh", "repo", "create"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "repository already exists")
+        if cmd[:3] == ["gh", "api", "user"]:
+            return subprocess.CompletedProcess(cmd, 0, '{"login":"example"}', "")
+        if cmd[:3] == ["gh", "repo", "view"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                '{"sshUrl":"git@github.com:example/agent-home.git","url":"https://github.com/example/agent-home"}',
+                "",
+            )
+        if cmd[:3] == ["git", "push", "-u"]:
+            push_calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(cli_mod, "_run_command", fake_run_command)
+    monkeypatch.setattr(cli_mod, "_git_remote_add_origin", lambda _home, url: added_origin.__setitem__("url", url))
+    monkeypatch.setattr(cli_mod, "_ensure_initial_commit", lambda _: False)
+
+    cli_mod._ensure_github_remote(home=home, repo_name=None)
+
+    assert added_origin["url"] == "git@github.com:example/agent-home.git"
+    assert push_calls == []
+
+
+def test_write_service_assets_linux_generates_systemd_unit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli_mod.sys, "platform", "linux")
+    monkeypatch.setattr(
+        cli_mod.shutil,
+        "which",
+        lambda name: "/usr/bin/uv" if name == "uv" else "/bin/systemctl" if name == "systemctl" else None,
+    )
+
+    cli_mod._write_service_assets(home)
+    unit_path = home / "services" / "open-strix.service"
+    assert unit_path.exists()
+    text = unit_path.read_text(encoding="utf-8")
+    assert "ExecStart=/usr/bin/uv run open-strix run --home" in text
+    assert str(home) in text
+
+
+def test_write_service_assets_macos_generates_launchd_plist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        cli_mod.shutil,
+        "which",
+        lambda name: "/usr/local/bin/uv" if name == "uv" else "/bin/launchctl" if name == "launchctl" else None,
+    )
+
+    cli_mod._write_service_assets(home)
+    label = cli_mod._launchd_label(home)
+    plist_path = home / "services" / f"{label}.plist"
+    assert plist_path.exists()
+    text = plist_path.read_text(encoding="utf-8")
+    assert "<key>Label</key>" in text
+    assert label in text
+    assert "open-strix" in text
+
+
+def test_write_service_assets_windows_generates_task_scripts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli_mod.sys, "platform", "win32")
+    monkeypatch.setattr(
+        cli_mod.shutil,
+        "which",
+        lambda name: "C:\\uv\\uv.exe" if name == "uv" else "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" if name == "powershell" else "C:\\Windows\\System32\\schtasks.exe" if name == "schtasks" else None,
+    )
+
+    cli_mod._write_service_assets(home)
+    install_script = home / "services" / "install-open-strix-task.ps1"
+    uninstall_script = home / "services" / "uninstall-open-strix-task.ps1"
+    assert install_script.exists()
+    assert uninstall_script.exists()
+    install_text = install_script.read_text(encoding="utf-8")
+    assert "Register-ScheduledTask" in install_text
+    assert "open-strix run --home" in install_text
+
+
+def test_service_setup_section_linux_includes_systemd_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli_mod.sys, "platform", "linux")
+    monkeypatch.setattr(
+        cli_mod.shutil,
+        "which",
+        lambda name: "/bin/systemctl" if name == "systemctl" else "/bin/journalctl" if name == "journalctl" else "/usr/bin/uv" if name == "uv" else None,
+    )
+
+    section = cli_mod._service_setup_section(home)
+    assert "Linux/systemd user service" in section
+    assert "systemctl --user enable --now open-strix.service" in section
+
+
+def test_service_setup_section_windows_missing_tools_mentions_requirements(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli_mod.sys, "platform", "win32")
+    monkeypatch.setattr(
+        cli_mod.shutil,
+        "which",
+        lambda name: "C:\\uv\\uv.exe" if name == "uv" else None,
+    )
+
+    section = cli_mod._service_setup_section(home)
+    assert "Windows" in section
+    assert "missing required tools" in section
+
+
 def test_cli_setup_scaffolds_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     if shutil.which("git") is None or shutil.which("uv") is None:
         pytest.skip("git/uv are not installed")
@@ -215,6 +401,7 @@ def test_cli_setup_scaffolds_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert (home / "scheduler.yaml").exists()
     assert (home / "checkpoint.md").exists()
     assert (home / "pyproject.toml").exists()
+    assert (home / "services").exists()
     assert (home / "state" / ".gitkeep").exists()
     assert (home / ".env").exists()
 

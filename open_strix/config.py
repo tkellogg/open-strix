@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from .builtin_skills import BUILTIN_HELPER_SCRIPTS
+from .builtin_skills import BUILTIN_HOME_DIRNAME, sync_builtin_skills_home
 
 DEFAULT_MODEL = "MiniMax-M2.5"
 DEFAULT_MODEL_PROVIDER = "anthropic"
@@ -29,7 +29,7 @@ jobs:
       Review journal predictions from 2-3 days ago.
       Use `logs/events.jsonl` and Discord history as ground truth.
       For each reviewed prediction, append a structured entry:
-      `uv run python scripts/prediction_review_log.py --prediction-datetime ... --is-true ... --comments ...`
+      `uv run python .open_strix_builtin_skills/scripts/prediction_review_log.py --prediction-datetime ... --is-true ... --comments ...`
       Include evidence and behavior adjustments in comments.
 """
 
@@ -179,12 +179,31 @@ def bootstrap_home_repo(layout: RepoLayout, checkpoint_text: str) -> None:
     _write_if_missing(layout.scheduler_file, DEFAULT_SCHEDULER)
     _write_if_missing(layout.checkpoint_file, checkpoint_text)
     _write_if_missing(layout.scripts_dir / "pre_commit.py", DEFAULT_PRE_COMMIT_SCRIPT)
-    for script_name, script_body in BUILTIN_HELPER_SCRIPTS.items():
-        _write_if_missing(layout.scripts_dir / script_name, script_body)
+    sync_builtin_skills_home(layout.home)
+    _cleanup_legacy_builtin_scripts(layout)
     layout.events_log.touch(exist_ok=True)
     layout.journal_log.touch(exist_ok=True)
     _install_git_hook(layout.home)
     _ensure_logs_ignored(layout.home)
+
+
+def _cleanup_legacy_builtin_scripts(layout: RepoLayout) -> None:
+    legacy_names = [
+        "prediction_review_log.py",
+        "memory_dashboard.py",
+        "file_frequency_report.py",
+    ]
+    builtin_scripts_dir = layout.home / BUILTIN_HOME_DIRNAME / "scripts"
+    for name in legacy_names:
+        legacy_path = layout.scripts_dir / name
+        if not legacy_path.exists() or not legacy_path.is_file():
+            continue
+        builtin_path = builtin_scripts_dir / name
+        if not builtin_path.exists() or not builtin_path.is_file():
+            continue
+        if legacy_path.read_text(encoding="utf-8") != builtin_path.read_text(encoding="utf-8"):
+            continue
+        legacy_path.unlink()
 
 
 def _install_git_hook(home: Path) -> None:
@@ -235,7 +254,7 @@ exit 1
 
 def _ensure_logs_ignored(home: Path) -> None:
     gitignore_path = home / ".gitignore"
-    required_entries = ["logs/", ".env"]
+    required_entries = ["logs/", ".env", f"{BUILTIN_HOME_DIRNAME}/"]
     if not gitignore_path.exists():
         gitignore_path.write_text("\n".join(required_entries) + "\n", encoding="utf-8")
         return

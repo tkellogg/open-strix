@@ -47,6 +47,11 @@ Memory:
 
 WARNING: You only remember what you write. Keep notes in `state/` about literally anything you think you'll need
 in the future.
+
+Python:
+- You're running inside a process started with `uv`, which is a virtual environment
+- Run python scripts with a simple `python` command
+- Add dependencies via `uv add`
 """
 
 

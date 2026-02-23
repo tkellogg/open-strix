@@ -86,6 +86,30 @@ def test_bot_allowlist_config_controls_message_processing(
     assert app.should_process_discord_message(author_is_bot=True, author_id="42") is True
 
 
+def test_log_event_includes_stable_session_id_for_app_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    app.log_event("test_event_a", value=1)
+    app.log_event("test_event_b", value=2)
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    session_ids = {
+        row["session_id"]
+        for row in rows
+        if row.get("type") in {"test_event_a", "test_event_b"}
+    }
+    assert session_ids == {app.session_id}
+    assert app.session_id
+
+
 @pytest.mark.asyncio
 async def test_run_starts_discord_with_configured_token_env(
     tmp_path: Path,

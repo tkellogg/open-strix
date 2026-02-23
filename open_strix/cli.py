@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import re
 import shutil
@@ -58,6 +59,265 @@ def _run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=False,
     )
+
+
+def _platform_key() -> str:
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("win"):
+        return "windows"
+    return "unknown"
+
+
+def _service_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-")
+    return slug or "open-strix"
+
+
+def _service_tools() -> dict[str, bool]:
+    return {
+        "systemctl": shutil.which("systemctl") is not None,
+        "journalctl": shutil.which("journalctl") is not None,
+        "launchctl": shutil.which("launchctl") is not None,
+        "schtasks": shutil.which("schtasks") is not None,
+        "pwsh": shutil.which("pwsh") is not None,
+        "powershell": shutil.which("powershell") is not None,
+    }
+
+
+def _service_uv_bin() -> str:
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        return uv_bin
+    return "uv"
+
+
+def _systemd_unit_text(home: Path) -> str:
+    uv_bin = _service_uv_bin()
+    return dedent(
+        f"""\
+        [Unit]
+        Description=open-strix agent ({home.name})
+        After=network-online.target
+        Wants=network-online.target
+
+        [Service]
+        Type=simple
+        WorkingDirectory={home}
+        ExecStart={uv_bin} run open-strix run --home {home}
+        Restart=on-failure
+        RestartSec=5
+        Environment=PYTHONUNBUFFERED=1
+
+        [Install]
+        WantedBy=default.target
+        """,
+    )
+
+
+def _launchd_label(home: Path) -> str:
+    return f"ai.open-strix.{_service_slug(home.name)}"
+
+
+def _launchd_plist_text(home: Path) -> str:
+    uv_bin = _service_uv_bin()
+    label = _launchd_label(home)
+    stdout_path = home / "logs" / "service.stdout.log"
+    stderr_path = home / "logs" / "service.stderr.log"
+    return dedent(
+        f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>Label</key>
+          <string>{label}</string>
+          <key>ProgramArguments</key>
+          <array>
+            <string>{uv_bin}</string>
+            <string>run</string>
+            <string>open-strix</string>
+            <string>run</string>
+            <string>--home</string>
+            <string>{home}</string>
+          </array>
+          <key>WorkingDirectory</key>
+          <string>{home}</string>
+          <key>RunAtLoad</key>
+          <true/>
+          <key>KeepAlive</key>
+          <true/>
+          <key>StandardOutPath</key>
+          <string>{stdout_path}</string>
+          <key>StandardErrorPath</key>
+          <string>{stderr_path}</string>
+        </dict>
+        </plist>
+        """,
+    )
+
+
+def _windows_task_name(home: Path) -> str:
+    return f"OpenStrix-{_service_slug(home.name)}"
+
+
+def _windows_task_install_ps1(home: Path) -> str:
+    uv_bin = _service_uv_bin().replace('"', '`"')
+    home_value = str(home).replace('"', '`"')
+    task_name = _windows_task_name(home)
+    return dedent(
+        f"""\
+        $ErrorActionPreference = "Stop"
+        $TaskName = "{task_name}"
+        $HomeDir = "{home_value}"
+        $Uv = "{uv_bin}"
+        $Args = "run open-strix run --home `"$HomeDir`""
+
+        $Action = New-ScheduledTaskAction -Execute $Uv -Argument $Args
+        $Trigger = New-ScheduledTaskTrigger -AtLogOn
+        $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+
+        Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description "open-strix agent" -Force | Out-Null
+        Start-ScheduledTask -TaskName $TaskName
+        Write-Host "Installed and started task: $TaskName"
+        """,
+    )
+
+
+def _windows_task_uninstall_ps1(home: Path) -> str:
+    task_name = _windows_task_name(home)
+    return dedent(
+        f"""\
+        $ErrorActionPreference = "Stop"
+        $TaskName = "{task_name}"
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {{
+          Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+          Write-Host "Removed task: $TaskName"
+        }} else {{
+          Write-Host "Task not found: $TaskName"
+        }}
+        """,
+    )
+
+
+def _write_service_assets(home: Path) -> None:
+    services_dir = home / "services"
+    services_dir.mkdir(parents=True, exist_ok=True)
+
+    platform = _platform_key()
+    if platform == "linux":
+        _write_if_missing(services_dir / "open-strix.service", _systemd_unit_text(home))
+        return
+    if platform == "macos":
+        _write_if_missing(
+            services_dir / f"{_launchd_label(home)}.plist",
+            _launchd_plist_text(home),
+        )
+        return
+    if platform == "windows":
+        _write_if_missing(
+            services_dir / "install-open-strix-task.ps1",
+            _windows_task_install_ps1(home),
+        )
+        _write_if_missing(
+            services_dir / "uninstall-open-strix-task.ps1",
+            _windows_task_uninstall_ps1(home),
+        )
+
+
+def _service_setup_section(home: Path) -> str:
+    platform = _platform_key()
+    tools = _service_tools()
+    services_dir = home / "services"
+
+    if platform == "linux":
+        unit_path = services_dir / "open-strix.service"
+        if tools["systemctl"]:
+            log_cmd = "journalctl --user -u open-strix.service -f"
+            if not tools["journalctl"]:
+                log_cmd = "systemctl --user status open-strix.service"
+            return dedent(
+                f"""\
+                6) Optional: run as a service (Linux/systemd user service)
+                - generated file: {unit_path}
+                - install commands:
+                  - mkdir -p ~/.config/systemd/user
+                  - cp "{unit_path}" ~/.config/systemd/user/open-strix.service
+                  - systemctl --user daemon-reload
+                  - systemctl --user enable --now open-strix.service
+                  - {log_cmd}
+                - if you need it to run without an active login session:
+                  - loginctl enable-linger "$USER"
+                """
+            ).strip("\n")
+        return dedent(
+            f"""\
+            6) Optional: run as a service (Linux)
+            - generated file: {unit_path}
+            - `systemctl` was not detected in PATH, so automatic systemd commands are omitted.
+            - if your distro uses systemd, install `systemctl` tooling and use the unit above.
+            """
+        ).strip("\n")
+
+    if platform == "macos":
+        plist_path = services_dir / f"{_launchd_label(home)}.plist"
+        label = _launchd_label(home)
+        if tools["launchctl"]:
+            return dedent(
+                f"""\
+                6) Optional: run as a service (macOS launchd)
+                - generated file: {plist_path}
+                - install commands:
+                  - mkdir -p ~/Library/LaunchAgents
+                  - cp "{plist_path}" ~/Library/LaunchAgents/{label}.plist
+                  - launchctl unload ~/Library/LaunchAgents/{label}.plist
+                  - launchctl load ~/Library/LaunchAgents/{label}.plist
+                  - launchctl start {label}
+                """
+            ).strip("\n")
+        return dedent(
+            f"""\
+            6) Optional: run as a service (macOS)
+            - generated file: {plist_path}
+            - `launchctl` was not detected in PATH, so launchd install commands are omitted.
+            """
+        ).strip("\n")
+
+    if platform == "windows":
+        install_script = services_dir / "install-open-strix-task.ps1"
+        uninstall_script = services_dir / "uninstall-open-strix-task.ps1"
+        powershell_bin = "pwsh" if tools["pwsh"] else "powershell" if tools["powershell"] else ""
+        if tools["schtasks"] and powershell_bin:
+            return dedent(
+                f"""\
+                6) Optional: run as a service (Windows Task Scheduler)
+                - generated files:
+                  - {install_script}
+                  - {uninstall_script}
+                - install command:
+                  - {powershell_bin} -ExecutionPolicy Bypass -File "{install_script}"
+                - uninstall command:
+                  - {powershell_bin} -ExecutionPolicy Bypass -File "{uninstall_script}"
+                """
+            ).strip("\n")
+        return dedent(
+            f"""\
+            6) Optional: run as a service (Windows)
+            - generated files:
+              - {install_script}
+              - {uninstall_script}
+            - missing required tools (`schtasks` and/or PowerShell). Install them, then run the script.
+            """
+        ).strip("\n")
+
+    return dedent(
+        """\
+        6) Optional: run as a service
+        - Service bootstrap files were not generated because this OS was not recognized.
+        """
+    ).strip("\n")
 
 
 def _normalize_distribution_name(value: str) -> str:
@@ -218,6 +478,45 @@ def _ensure_initial_commit(home: Path) -> bool:
     return commit_proc.returncode == 0
 
 
+def _github_login(home: Path) -> str:
+    proc = _run_command(["gh", "api", "user"], cwd=home)
+    if proc.returncode != 0:
+        return ""
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return ""
+    return str(payload.get("login", "")).strip()
+
+
+def _github_repo_ref(home: Path, repo: str) -> str:
+    if "/" in repo:
+        return repo
+    login = _github_login(home)
+    if not login:
+        return repo
+    return f"{login}/{repo}"
+
+
+def _github_existing_repo_remote_url(home: Path, repo: str) -> str:
+    repo_ref = _github_repo_ref(home, repo)
+    view_proc = _run_command(
+        ["gh", "repo", "view", repo_ref, "--json", "sshUrl,url"],
+        cwd=home,
+    )
+    if view_proc.returncode != 0:
+        return ""
+
+    try:
+        payload = json.loads(view_proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return ""
+
+    ssh_url = str(payload.get("sshUrl", "")).strip()
+    https_url = str(payload.get("url", "")).strip()
+    return ssh_url or https_url
+
+
 def _ensure_github_remote(home: Path, repo_name: str | None = None) -> None:
     if shutil.which("gh") is None:
         print("`gh` not found; skipping GitHub remote setup.", flush=True)
@@ -238,6 +537,30 @@ def _ensure_github_remote(home: Path, repo_name: str | None = None) -> None:
         cwd=home,
     )
     if create_proc.returncode != 0:
+        existing_repo_url = _github_existing_repo_remote_url(home, repo)
+        if existing_repo_url:
+            try:
+                _git_remote_add_origin(home, existing_repo_url)
+            except RuntimeError as exc:
+                print(str(exc), flush=True)
+                return
+            print(
+                f"GitHub repo `{repo}` already exists; configured origin to `{existing_repo_url}`.",
+                flush=True,
+            )
+            if _ensure_initial_commit(home):
+                push_proc = _run_command(["git", "push", "-u", "origin", "HEAD"], cwd=home)
+                if push_proc.returncode != 0:
+                    print(
+                        f"Existing GitHub repo linked, but initial push failed: {push_proc.stderr.strip()}",
+                        flush=True,
+                    )
+            else:
+                print(
+                    "Existing GitHub repo linked. Initial commit/push skipped (check git user.name/user.email).",
+                    flush=True,
+                )
+            return
         print(
             f"Failed to create private GitHub repo `{repo}`: {create_proc.stderr.strip()}",
             flush=True,
@@ -349,6 +672,7 @@ def setup_home(home: Path, *, github: bool = False, repo_name: str | None = None
     layout = RepoLayout(home=home, state_dir_name=STATE_DIR_NAME)
     bootstrap_home_repo(layout=layout, checkpoint_text=DEFAULT_CHECKPOINT)
     _write_if_missing(home / ".env", DEFAULT_ENV)
+    _write_service_assets(home)
 
     _ensure_git_remote(home=home, github=github, repo_name=repo_name)
 
@@ -359,6 +683,7 @@ def setup_home(home: Path, *, github: bool = False, repo_name: str | None = None
 def _print_setup_walkthrough(home: Path) -> None:
     env_path = home / ".env"
     config_path = home / "config.yaml"
+    service_section = _service_setup_section(home)
     text = dedent(
         f"""
 
@@ -428,6 +753,8 @@ def _print_setup_walkthrough(home: Path) -> None:
         5) Run
         - start agent: uv run open-strix
         - if no token is set, open-strix runs stdin mode.
+
+        {service_section}
         """
     ).strip("\n")
     print(text, flush=True)

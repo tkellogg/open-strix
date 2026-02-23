@@ -53,5 +53,6 @@ class ReadOnlyFilesystemBackend:
         return self.upload_files(files)
 
 
-def build_builtin_skills_backend() -> ReadOnlyFilesystemBackend:
-    return ReadOnlyFilesystemBackend(root_dir=materialize_builtin_skills())
+def build_builtin_skills_backend(root_dir: Path | None = None) -> ReadOnlyFilesystemBackend:
+    target_root = root_dir if root_dir is not None else materialize_builtin_skills()
+    return ReadOnlyFilesystemBackend(root_dir=target_root)

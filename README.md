@@ -55,6 +55,10 @@ It also runs:
   - `user.name` (defaults to directory name)
   - `user.email`
 - checks git remote and, if `origin` is missing, prompts for the remote URL
+- detects OS/tools and generates service bootstrap files in `services/`:
+  - Linux: `open-strix.service` (systemd user unit)
+  - macOS: `ai.open-strix.<name>.plist` (launchd agent)
+  - Windows: Task Scheduler install/uninstall PowerShell scripts
 
 It also prints a CLI walkthrough with links and step-by-step setup for:
 - MiniMax M2.5
@@ -283,7 +287,7 @@ Related files:
 - `scheduler.yaml`: cron/time-of-day jobs
 - `blocks/*.yaml`: memory blocks surfaced in prompt context
 - `checkpoint.md`: returned by `journal` tool after a journal write
-- `scripts/prediction_review_log.py`: helper for structured prediction-accuracy reviews
+- `.open_strix_builtin_skills/scripts/prediction_review_log.py`: helper for structured prediction-accuracy reviews (read-only packaged script)
 - `skills/`: user-editable local skills
 - `/.open_strix_builtin_skills/skill-creator/SKILL.md`: packaged built-in skill source mounted as read-only
 - `/.open_strix_builtin_skills/prediction-review/SKILL.md`: packaged built-in skill for prediction calibration
