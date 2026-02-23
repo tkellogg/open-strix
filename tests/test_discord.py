@@ -499,7 +499,171 @@ async def test_send_message_tool_returns_tool_error_on_empty_text(
     tools = {tool.name: tool for tool in app._build_tools()}
 
     result = await tools["send_message"].ainvoke({"text": "   ", "channel_id": "123"})
-    assert "message text was empty" in result
+    assert "message text was empty and no attachments were provided" in result
+
+
+@pytest.mark.asyncio
+async def test_send_message_tool_sends_attachment_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeMessageable:
+        pass
+
+    class FakeSentMessage:
+        def __init__(self, message_id: int) -> None:
+            self.id = message_id
+
+    class FakeChannel(FakeMessageable):
+        def __init__(self) -> None:
+            self.sent_payloads: list[dict[str, Any]] = []
+
+        async def send(
+            self,
+            text: str | None = None,
+            *,
+            files: list[Any] | None = None,
+        ) -> FakeSentMessage:
+            self.sent_payloads.append(
+                {
+                    "text": text,
+                    "file_count": len(files or []),
+                    "file_names": [str(getattr(item, "filename", "")) for item in (files or [])],
+                },
+            )
+            return FakeSentMessage(100 + len(self.sent_payloads))
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    attachment = tmp_path / "state" / "dashboards" / "chart.png"
+    attachment.parent.mkdir(parents=True, exist_ok=True)
+    attachment.write_bytes(b"png")
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    monkeypatch.setattr(app_mod.discord.abc, "Messageable", FakeMessageable)
+
+    tools = {tool.name: tool for tool in app._build_tools()}
+    result = await tools["send_message"].ainvoke(
+        {
+            "text": "chart update",
+            "channel_id": "123",
+            "attachment_paths": ["/state/dashboards/chart.png"],
+        },
+    )
+
+    assert "sent=True" in result
+    assert "attachments=1" in result
+    assert len(channel.sent_payloads) == 1
+    assert channel.sent_payloads[0]["text"] == "chart update"
+    assert channel.sent_payloads[0]["file_count"] == 1
+    assert channel.sent_payloads[0]["file_names"] == ["chart.png"]
+
+    sent_message = app.message_history_by_channel["123"][-1]
+    assert sent_message["attachments"] == ["/state/dashboards/chart.png"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_tool_supports_attachment_only_messages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeMessageable:
+        pass
+
+    class FakeSentMessage:
+        def __init__(self, message_id: int) -> None:
+            self.id = message_id
+
+    class FakeChannel(FakeMessageable):
+        def __init__(self) -> None:
+            self.sent_payloads: list[dict[str, Any]] = []
+
+        async def send(
+            self,
+            text: str | None = None,
+            *,
+            files: list[Any] | None = None,
+        ) -> FakeSentMessage:
+            self.sent_payloads.append(
+                {
+                    "text": text,
+                    "file_count": len(files or []),
+                },
+            )
+            return FakeSentMessage(100 + len(self.sent_payloads))
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    attachment = tmp_path / "state" / "dashboards" / "just-image.png"
+    attachment.parent.mkdir(parents=True, exist_ok=True)
+    attachment.write_bytes(b"png")
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    monkeypatch.setattr(app_mod.discord.abc, "Messageable", FakeMessageable)
+
+    tools = {tool.name: tool for tool in app._build_tools()}
+    result = await tools["send_message"].ainvoke(
+        {
+            "text": "   ",
+            "channel_id": "123",
+            "attachment_paths": ["state/dashboards/just-image.png"],
+        },
+    )
+
+    assert "sent=True" in result
+    assert "attachments=1" in result
+    assert len(channel.sent_payloads) == 1
+    assert channel.sent_payloads[0]["text"] is None
+    assert channel.sent_payloads[0]["file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_send_message_tool_rejects_missing_attachment_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    result = await tools["send_message"].ainvoke(
+        {
+            "text": "hello",
+            "channel_id": "123",
+            "attachment_paths": ["state/dashboards/missing.png"],
+        },
+    )
+    assert "attachment file does not exist" in result
 
 
 @pytest.mark.asyncio

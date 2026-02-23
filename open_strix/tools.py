@@ -263,27 +263,92 @@ class ToolsMixin:
         self._send_message_similarity_streak = streak
         return streak, similarity_ratio
 
+    def _resolve_send_message_attachments(
+        self,
+        attachment_paths: list[str] | str | None,
+    ) -> tuple[list[Path], list[str]]:
+        raw_items: list[str]
+        if attachment_paths is None:
+            raw_items = []
+        elif isinstance(attachment_paths, str):
+            raw_items = [attachment_paths]
+        else:
+            raw_items = [str(item) for item in attachment_paths]
+
+        resolved_paths: list[Path] = []
+        attachment_names: list[str] = []
+        seen_paths: set[Path] = set()
+        for raw in raw_items:
+            raw_path = raw.strip()
+            if not raw_path:
+                continue
+
+            raw_candidate = Path(raw_path).expanduser()
+            if raw_candidate.is_absolute():
+                absolute_candidate = raw_candidate.resolve()
+                if self.home in absolute_candidate.parents:
+                    candidate = absolute_candidate
+                else:
+                    candidate = (self.home / raw_path.lstrip("/\\")).resolve()
+            else:
+                candidate = (self.home / raw_candidate).resolve()
+
+            if self.home not in candidate.parents:
+                raise ToolException(
+                    "send_message failed: attachment path must be inside the agent home directory.",
+                )
+            if not candidate.exists():
+                raise ToolException(
+                    f"send_message failed: attachment file does not exist: {candidate}",
+                )
+            if not candidate.is_file():
+                raise ToolException(
+                    f"send_message failed: attachment path is not a file: {candidate}",
+                )
+            if candidate in seen_paths:
+                continue
+
+            seen_paths.add(candidate)
+            resolved_paths.append(candidate)
+            attachment_names.append(_virtual_path(candidate, root=self.home))
+
+        return resolved_paths, attachment_names
+
     def _build_tools(self) -> list[Any]:
         shell_tool_name = _shell_tool_name()
 
         @tool("send_message")
-        async def send_message(text: str, channel_id: str | None = None) -> str:
-            """Send a Discord message to a channel. Defaults to the current event channel."""
-            if not text.strip():
+        async def send_message(
+            text: str,
+            channel_id: str | None = None,
+            attachment_paths: list[str] | None = None,
+        ) -> str:
+            """Send a Discord message to a channel with optional file attachments."""
+            resolved_attachment_paths, attachment_names = self._resolve_send_message_attachments(
+                attachment_paths,
+            )
+
+            if not text.strip() and not resolved_attachment_paths:
                 self.log_event(
                     "tool_call_error",
                     tool="send_message",
                     error_type="empty_message",
                 )
                 raise ToolException(
-                    "send_message failed: message text was empty. Provide non-empty text.",
+                    "send_message failed: message text was empty and no attachments were provided.",
                 )
 
             target_channel_id = channel_id or self.current_channel_id
             if target_channel_id is None:
                 return "No channel_id provided and no current event channel is available."
 
-            streak, similarity_ratio = self._update_send_message_similarity_streak(text)
+            similarity_basis = text
+            if attachment_names:
+                similarity_basis = (
+                    f"{text}\nattachments:{'|'.join(sorted(attachment_names))}"
+                )
+
+            streak, similarity_ratio = self._update_send_message_similarity_streak(similarity_basis)
             if streak >= self.send_message_loop_soft_limit:
                 self._send_message_circuit_breaker_active = True
 
@@ -333,6 +398,8 @@ class ToolsMixin:
             sent, sent_message_id, sent_chunks = await self._send_discord_message(
                 channel_id=target_channel_id,
                 text=text,
+                attachment_paths=resolved_attachment_paths,
+                attachment_names=attachment_names,
             )
 
             self.log_event(
@@ -341,13 +408,15 @@ class ToolsMixin:
                 channel_id=target_channel_id,
                 sent=sent,
                 chunks=sent_chunks,
+                attachment_names=attachment_names,
                 git_sync="deferred",
                 message_id=sent_message_id,
                 text_preview=text[:300],
             )
-            return "send_message complete (sent={sent}, chunks={chunks}, git_sync=deferred)".format(
+            return "send_message complete (sent={sent}, chunks={chunks}, attachments={attachments}, git_sync=deferred)".format(
                 sent=sent,
                 chunks=sent_chunks,
+                attachments=len(attachment_names),
             )
 
         @tool("list_messages")

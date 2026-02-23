@@ -176,8 +176,15 @@ class DiscordMixin:
         *,
         channel_id: str,
         text: str,
+        attachment_paths: list[Path] | None = None,
+        attachment_names: list[str] | None = None,
     ) -> tuple[bool, str | None, int]:
         chunks = [chunk for chunk in _chunk_discord_message(text) if chunk.strip()]
+        files_to_send = attachment_paths or []
+        outbound_attachment_names = attachment_names or []
+        if files_to_send and not chunks:
+            chunks = [""]
+
         sent = False
         sent_message_id: str | None = None
         sent_chunks = 0
@@ -191,14 +198,21 @@ class DiscordMixin:
                 if channel is None:
                     channel = await self.discord_client.fetch_channel(channel_int)
                 if isinstance(channel, discord.abc.Messageable):
-                    for chunk in chunks:
-                        sent_msg = await channel.send(chunk)
+                    for chunk_idx, chunk in enumerate(chunks):
+                        if chunk_idx == 0 and files_to_send:
+                            discord_files = [discord.File(str(path)) for path in files_to_send]
+                            if chunk:
+                                sent_msg = await channel.send(chunk, files=discord_files)
+                            else:
+                                sent_msg = await channel.send(files=discord_files)
+                        else:
+                            sent_msg = await channel.send(chunk)
                         sent_message_id = str(getattr(sent_msg, "id", "")) or None
                         self._remember_message(
                             channel_id=channel_id,
                             author="open_strix",
                             content=chunk,
-                            attachment_names=[],
+                            attachment_names=outbound_attachment_names if chunk_idx == 0 else [],
                             message_id=sent_message_id,
                             is_bot=True,
                             source="discord",
@@ -212,7 +226,16 @@ class DiscordMixin:
 
         if not sent:
             for chunk in chunks:
+                if not chunk.strip():
+                    continue
                 print(f"[open-strix send_message channel={channel_id}] {chunk}")
+            if outbound_attachment_names:
+                print(
+                    "[open-strix send_message attachments channel={channel_id}] {attachments}".format(
+                        channel_id=channel_id,
+                        attachments=", ".join(outbound_attachment_names),
+                    ),
+                )
             sent_chunks = len(chunks)
         return sent, sent_message_id, sent_chunks
 
