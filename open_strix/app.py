@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from uuid import uuid4
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -21,7 +21,7 @@ from deepagents.backends import FilesystemBackend
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import EditResult, FileUploadResponse, WriteResult
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from .builtin_skills import BUILTIN_HOME_DIRNAME
 from .config import (
@@ -185,6 +185,29 @@ def _git_sync(home: Path) -> str:
         return f"git push failed: {push_proc.stderr.strip()}"
 
     return "ok: committed and pushed"
+
+
+def _cleanup_old_sessions(sessions_dir: Path, retention_days: int) -> int:
+    """Remove session log directories older than retention_days."""
+    if not sessions_dir.exists():
+        return 0
+    cutoff = datetime.now(tz=UTC) - timedelta(days=retention_days)
+    removed = 0
+    for entry in sessions_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        # Session dirs are named like "20260226T013800Z-abcd1234".
+        # Parse the timestamp prefix to determine age.
+        name = entry.name
+        timestamp_part = name.split("-")[0] if "-" in name else name
+        try:
+            dir_time = datetime.strptime(timestamp_part, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+        except ValueError:
+            continue
+        if dir_time < cutoff:
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += 1
+    return removed
 
 
 class StateWriteGuardBackend:
@@ -367,6 +390,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
     ) -> None:
         entry = {
             "timestamp": utc_now_iso(),
+            "session_id": self.session_id,
             "channel_id": channel_id if channel_id is not None else self.current_channel_id,
             "user_wanted": user_wanted,
             "agent_did": agent_did,
@@ -582,6 +606,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             async with self._typing_indicator(event):
                 result = await self.agent.ainvoke({"messages": [HumanMessage(content=prompt)]})
             self._log_agent_trace(result)
+            self._write_session_log(event, prompt, result)
 
             final_text = self._extract_final_text(result)
             self.log_event(
@@ -607,6 +632,60 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
                         tool=call.get("name"),
                         args=call.get("args"),
                     )
+
+    def _write_session_log(
+        self,
+        event: AgentEvent,
+        prompt: str,
+        result: dict[str, Any],
+    ) -> None:
+        session_dir = self.layout.sessions_dir / self.session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+        slug = re.sub(r"[^a-z0-9]+", "-", (event.event_type or "unknown").lower()).strip("-")
+        filename = f"{timestamp}_{slug}.json"
+
+        messages = result.get("messages")
+        serialized_messages: list[dict[str, Any]] = []
+        if isinstance(messages, list):
+            for msg in messages:
+                if isinstance(msg, BaseMessage):
+                    try:
+                        serialized_messages.append(msg.model_dump())
+                    except Exception:
+                        serialized_messages.append(
+                            {"type": getattr(msg, "type", "unknown"), "content": str(getattr(msg, "content", ""))}
+                        )
+                elif isinstance(msg, dict):
+                    serialized_messages.append(msg)
+
+        record = {
+            "session_id": self.session_id,
+            "timestamp": utc_now_iso(),
+            "event": {
+                "event_type": event.event_type,
+                "channel_id": event.channel_id,
+                "channel_name": event.channel_name,
+                "author": event.author,
+                "scheduler_name": event.scheduler_name,
+                "source_id": event.source_id,
+            },
+            "prompt": prompt,
+            "messages": serialized_messages,
+        }
+        log_path = session_dir / filename
+        try:
+            log_path.write_text(
+                json.dumps(record, ensure_ascii=True, default=str, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.log_event(
+                "warning",
+                where="write_session_log",
+                warning_type="session_log_write_failed",
+                error=str(exc),
+            )
 
     def _extract_final_text(self, result: dict[str, Any]) -> str:
         messages = result.get("messages")
@@ -659,7 +738,15 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.worker_task = asyncio.create_task(self._event_worker())
         self.scheduler.start()
         self._reload_scheduler_jobs()
-        self.log_event("app_started", home=str(self.home))
+        removed = _cleanup_old_sessions(
+            self.layout.sessions_dir,
+            self.config.session_log_retention_days,
+        )
+        self.log_event(
+            "app_started",
+            home=str(self.home),
+            session_logs_cleaned=removed,
+        )
 
         token = os.getenv(self.config.discord_token_env, "")
         if token:

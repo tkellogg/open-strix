@@ -70,6 +70,10 @@ class RepoLayout:
         return self.home / "logs"
 
     @property
+    def sessions_dir(self) -> Path:
+        return self.logs_dir / "sessions"
+
+    @property
     def events_log(self) -> Path:
         return self.logs_dir / "events.jsonl"
 
@@ -101,6 +105,7 @@ class AppConfig:
     discord_messages_in_prompt: int = 10
     discord_token_env: str = "DISCORD_TOKEN"
     always_respond_bot_ids: set[str] = field(default_factory=set)
+    session_log_retention_days: int = 30
 
 
 def _write_if_missing(path: Path, content: str) -> None:
@@ -137,6 +142,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         discord_messages_in_prompt=int(loaded.get("discord_messages_in_prompt", 10)),
         discord_token_env=str(loaded.get("discord_token_env", "DISCORD_TOKEN")),
         always_respond_bot_ids=_normalize_id_list(loaded.get("always_respond_bot_ids")),
+        session_log_retention_days=int(loaded.get("session_log_retention_days", 30)),
     )
 
 
@@ -170,6 +176,7 @@ def bootstrap_home_repo(layout: RepoLayout, checkpoint_text: str) -> None:
     layout.skills_dir.mkdir(parents=True, exist_ok=True)
     layout.scripts_dir.mkdir(parents=True, exist_ok=True)
     layout.logs_dir.mkdir(parents=True, exist_ok=True)
+    layout.sessions_dir.mkdir(parents=True, exist_ok=True)
     (layout.state_dir / ".gitkeep").touch(exist_ok=True)
     (layout.blocks_dir / ".gitkeep").touch(exist_ok=True)
     (layout.skills_dir / ".gitkeep").touch(exist_ok=True)
