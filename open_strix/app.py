@@ -304,6 +304,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.fetch_cache_dir = Path(tempfile.mkdtemp(prefix="fetch-cache-", dir=self.layout.logs_dir))
 
         self.discord_client: DiscordBridge | None = None
+        self.api_runner: Any | None = None
         self.worker_task: asyncio.Task[Any] | None = None
         self._current_turn_sent_messages: list[tuple[str, str]] | None = None
         self.send_message_loop_soft_limit = SEND_MESSAGE_LOOP_SOFT_LIMIT
@@ -748,6 +749,11 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             session_logs_cleaned=removed,
         )
 
+        if self.config.api_port > 0:
+            from .api import start_api
+
+            self.api_runner = await start_api(self, self.config.api_port)
+
         token = os.getenv(self.config.discord_token_env, "")
         if token:
             self.discord_client = DiscordBridge(self)
@@ -759,6 +765,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
 
     async def shutdown(self) -> None:
         self.log_event("app_shutdown_start")
+        if self.api_runner is not None:
+            await self.api_runner.cleanup()
         if self.discord_client is not None and not self.discord_client.is_closed():
             await self.discord_client.close()
         if self.scheduler.running:
