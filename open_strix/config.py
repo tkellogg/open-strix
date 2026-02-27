@@ -106,6 +106,7 @@ class AppConfig:
     discord_token_env: str = "DISCORD_TOKEN"
     always_respond_bot_ids: set[str] = field(default_factory=set)
     session_log_retention_days: int = 30
+    api_port: int = 0
 
 
 def _write_if_missing(path: Path, content: str) -> None:
@@ -143,6 +144,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         discord_token_env=str(loaded.get("discord_token_env", "DISCORD_TOKEN")),
         always_respond_bot_ids=_normalize_id_list(loaded.get("always_respond_bot_ids")),
         session_log_retention_days=int(loaded.get("session_log_retention_days", 30)),
+        api_port=int(loaded.get("api_port", 0)),
     )
 
 
