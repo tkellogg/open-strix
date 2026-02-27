@@ -274,6 +274,7 @@ class DiscordMixin:
             channel_visibility=channel_visibility,
             attachment_names=attachment_names,
             source_id=str(message.id),
+            content=prompt,
         )
         await self.enqueue_event(
             AgentEvent(
