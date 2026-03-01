@@ -4,6 +4,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import yaml
+
 
 def _run(cmd: list[str], cwd: Path, env: dict[str, str], stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -46,6 +48,7 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
         home / ".open_strix_builtin_skills" / "scripts" / "memory_dashboard.py",
         home / ".open_strix_builtin_skills" / "scripts" / "file_frequency_report.py",
         home / ".git" / "hooks" / "pre-commit",
+        home / "blocks" / "init.yaml",
     ]
     missing = [path for path in expected_paths if not path.exists()]
     assert not missing, f"missing onboarding files: {missing}"
@@ -77,6 +80,10 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     scheduler_text = (home / "scheduler.yaml").read_text(encoding="utf-8")
     assert "prediction-review-twice-daily" in scheduler_text
     assert 'cron: "0 9,21 * * *"' in scheduler_text
+
+    init_block = yaml.safe_load((home / "blocks" / "init.yaml").read_text(encoding="utf-8"))
+    assert init_block["name"] == "init"
+    assert "onboarding" in init_block["text"].lower()
 
     # Second run should be idempotent and still work.
     second_run = _run(["uv", "run", "open-strix"], cwd=home, env=env, stdin="")

@@ -404,6 +404,11 @@ def test_cli_setup_scaffolds_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert (home / "services").exists()
     assert (home / "state" / ".gitkeep").exists()
     assert (home / ".env").exists()
+    assert (home / "blocks" / "init.yaml").exists()
+
+    init_block = yaml.safe_load((home / "blocks" / "init.yaml").read_text(encoding="utf-8"))
+    assert init_block["name"] == "init"
+    assert "onboarding" in init_block["text"].lower()
 
     env_text = (home / ".env").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY=" in env_text
