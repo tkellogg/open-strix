@@ -88,3 +88,29 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     # Second run should be idempotent and still work.
     second_run = _run(["uv", "run", "open-strix"], cwd=home, env=env, stdin="")
     assert "No Discord token configured. Running in stdin mode." in second_run.stdout
+
+
+def test_init_block_not_recreated_after_deletion(tmp_path: Path) -> None:
+    """Once the agent deletes init.yaml (onboarding complete), restarts must not recreate it."""
+    repo_root = Path(__file__).resolve().parents[1]
+    home = tmp_path / "onboarded-agent"
+    home.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.pop("DISCORD_TOKEN", None)
+
+    _run(["uv", "init", "--python", "3.11", "--no-readme"], cwd=home, env=env)
+    _run(["uv", "add", "--editable", str(repo_root)], cwd=home, env=env)
+
+    # First run creates init block.
+    _run(["uv", "run", "open-strix"], cwd=home, env=env, stdin="")
+    init_path = home / "blocks" / "init.yaml"
+    assert init_path.exists(), "init.yaml should exist after first run"
+
+    # Simulate agent completing onboarding by deleting the init block.
+    init_path.unlink()
+    assert not init_path.exists()
+
+    # Restart the app — init block must NOT reappear.
+    _run(["uv", "run", "open-strix"], cwd=home, env=env, stdin="")
+    assert not init_path.exists(), "init.yaml must not reappear after agent deleted it"

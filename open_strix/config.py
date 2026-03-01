@@ -190,7 +190,11 @@ def bootstrap_home_repo(layout: RepoLayout, checkpoint_text: str) -> None:
     layout.sessions_dir.mkdir(parents=True, exist_ok=True)
     (layout.state_dir / ".gitkeep").touch(exist_ok=True)
     (layout.blocks_dir / ".gitkeep").touch(exist_ok=True)
-    _write_if_missing(layout.blocks_dir / "init.yaml", DEFAULT_INIT_BLOCK)
+    # Only create init block on truly fresh repos.
+    # Once the agent deletes it after onboarding, restarts must not recreate it.
+    # We use config.yaml as the signal: if it already exists, this isn't a first run.
+    if not layout.config_file.exists():
+        _write_if_missing(layout.blocks_dir / "init.yaml", DEFAULT_INIT_BLOCK)
     (layout.skills_dir / ".gitkeep").touch(exist_ok=True)
     (layout.scripts_dir / ".gitkeep").touch(exist_ok=True)
     _write_if_missing(layout.config_file, DEFAULT_CONFIG)
