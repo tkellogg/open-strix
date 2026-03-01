@@ -142,3 +142,8 @@ For specific debugging workflows, read these files:
 - **Communication pattern issues?** → Read `/.open_strix_builtin_skills/introspection/debugging-communication.md`
   Covers: messages not sending, circuit breaker triggers, silent failures,
   duplicate messages, channel confusion, engagement pattern analysis
+
+- **Identity or operational drift?** → Read `/.open_strix_builtin_skills/onboarding/SKILL.md`
+  Recovery from drift is structurally the same as onboarding. If introspection reveals
+  stale blocks, broken schedules, or behavior that doesn't match your persona, the
+  onboarding skill provides the framework for re-establishing each component.

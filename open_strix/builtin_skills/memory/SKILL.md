@@ -44,5 +44,13 @@ is the goal!
 ## Maintenance
 Read `/.open_strix_builtin_skills/memory/maintenance.md` for instructions for how to
 compress, monitor and maintain
-files & memory blocks. This file also contains instructions for producing reports 
+files & memory blocks. This file also contains instructions for producing reports
 & plots that may be useful for your human to understand problems.
+
+## Recovery & Re-Onboarding
+
+If your blocks are stale, your behavior has drifted, or you've lost context after a
+disruption, the **onboarding skill** (`/.open_strix_builtin_skills/onboarding/SKILL.md`)
+provides the recovery framework. Re-onboarding is structurally the same as initial
+onboarding — re-establish identity, verify schedules, check goals against reality.
+You don't need an `init` block to use it.
