@@ -324,7 +324,7 @@ Live test env vars:
 
 ## Safety baseline
 
-- Agent file writes/edits are blocked outside `state/`.
+- Agent file writes/edits are limited to `state/` and `skills/`.
 - Reads still use repository scope.
 - This is intentionally simple and should not be treated as production-ready.
 

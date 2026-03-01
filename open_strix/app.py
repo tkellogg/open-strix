@@ -210,22 +210,30 @@ def _cleanup_old_sessions(sessions_dir: Path, retention_days: int) -> int:
     return removed
 
 
-class StateWriteGuardBackend:
-    def __init__(self, root_dir: Path, state_dir: str) -> None:
+class WriteGuardBackend:
+    def __init__(self, root_dir: Path, writable_dirs: list[str]) -> None:
         self._fs = FilesystemBackend(root_dir=root_dir, virtual_mode=True)
-        self._state_root = PurePosixPath("/" + state_dir.strip("/"))
+        self._writable_roots = [
+            PurePosixPath("/" + d.strip("/")) for d in writable_dirs
+        ]
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._fs, name)
 
     def _is_write_allowed(self, file_path: str) -> bool:
         path = PurePosixPath("/" + file_path.lstrip("/"))
-        return path == self._state_root or self._state_root in path.parents
+        return any(
+            path == root or root in path.parents
+            for root in self._writable_roots
+        )
+
+    def _allowed_dirs_label(self) -> str:
+        return ", ".join(f"{r}/" for r in self._writable_roots)
 
     def write(self, file_path: str, content: str) -> WriteResult:
         if not self._is_write_allowed(file_path):
             return WriteResult(
-                error=f"Write blocked. Use files under {self._state_root}/ only.",
+                error=f"Write blocked. Writable directories: {self._allowed_dirs_label()}",
             )
         return self._fs.write(file_path=file_path, content=content)
 
@@ -241,7 +249,7 @@ class StateWriteGuardBackend:
     ) -> EditResult:
         if not self._is_write_allowed(file_path):
             return EditResult(
-                error=f"Edit blocked. Use files under {self._state_root}/ only.",
+                error=f"Edit blocked. Writable directories: {self._allowed_dirs_label()}",
             )
         return self._fs.edit(
             file_path=file_path,
@@ -315,7 +323,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self._send_message_circuit_breaker_active = False
         self._send_message_warning_reaction_sent = False
 
-        mutable_backend = StateWriteGuardBackend(root_dir=self.home, state_dir=STATE_DIR_NAME)
+        mutable_backend = WriteGuardBackend(
+            root_dir=self.home,
+            writable_dirs=[STATE_DIR_NAME, "skills"],
+        )
         builtin_backend = build_builtin_skills_backend(root_dir=self.home / BUILTIN_HOME_DIRNAME)
         backend = CompositeBackend(
             default=mutable_backend,
