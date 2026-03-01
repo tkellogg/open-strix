@@ -1047,6 +1047,26 @@ class ToolsMixin:
             self.log_event("tool_call", tool="remove_schedule", name=name, removed=len(before) - len(after))
             return f"Removed {len(before) - len(after)} schedule(s) named '{name}'."
 
+        @tool("lookup")
+        def lookup(query: str) -> str:
+            """Look up a Discord user or channel by name or ID.  Returns matching entries with their IDs, mention format, and type.  Use this when you need to find a channel_id or user mention format."""
+            results = self.phone_book.lookup(query)
+            if not results:
+                return f"No matches for '{query}'.  The phone book updates as new users and channels are discovered."
+            lines: list[str] = []
+            for entry in results:
+                if entry.kind == "user":
+                    bot_tag = " [bot]" if entry.is_bot else ""
+                    lines.append(
+                        f"User: {entry.name} | ID: {entry.id} | Mention: <@{entry.id}>{bot_tag}",
+                    )
+                else:
+                    lines.append(
+                        f"Channel: {entry.name} | ID: {entry.id} | Type: {entry.extra}",
+                    )
+            self.log_event("tool_call", tool="lookup", query=query, results=len(results))
+            return "\n".join(lines)
+
         send_message.handle_tool_error = True
         list_messages.handle_tool_error = True
         run_shell_tool.handle_tool_error = True
@@ -1056,6 +1076,7 @@ class ToolsMixin:
             send_message,
             react,
             list_messages,
+            lookup,
             run_shell_tool,
             fetch_url,
             journal,

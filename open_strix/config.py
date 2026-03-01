@@ -63,6 +63,10 @@ class RepoLayout:
         return self.home / self.state_dir_name
 
     @property
+    def phone_book_file(self) -> Path:
+        return self.state_dir / "phone-book.md"
+
+    @property
     def blocks_dir(self) -> Path:
         return self.home / "blocks"
 
