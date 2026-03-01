@@ -33,6 +33,15 @@ jobs:
       Include evidence and behavior adjustments in comments.
 """
 
+DEFAULT_INIT_BLOCK = """\
+name: init
+sort_order: -100
+text: |
+  You're a new agent. Read the onboarding skill to learn how to get started.
+  Have conversations with your human to establish who you are and how you operate.
+  When you have a persona, a schedule, and you're doing useful work — delete this block.
+"""
+
 DEFAULT_PRE_COMMIT_SCRIPT = """\
 def main() -> None:
     # Placeholder script for project-specific pre-commit checks.
@@ -181,6 +190,7 @@ def bootstrap_home_repo(layout: RepoLayout, checkpoint_text: str) -> None:
     layout.sessions_dir.mkdir(parents=True, exist_ok=True)
     (layout.state_dir / ".gitkeep").touch(exist_ok=True)
     (layout.blocks_dir / ".gitkeep").touch(exist_ok=True)
+    _write_if_missing(layout.blocks_dir / "init.yaml", DEFAULT_INIT_BLOCK)
     (layout.skills_dir / ".gitkeep").touch(exist_ok=True)
     (layout.scripts_dir / ".gitkeep").touch(exist_ok=True)
     _write_if_missing(layout.config_file, DEFAULT_CONFIG)
