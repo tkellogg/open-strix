@@ -404,3 +404,41 @@ def test_phone_book_file_in_layout() -> None:
 
     layout = RepoLayout(home=Path("/fake"), state_dir_name="state")
     assert layout.phone_book_file == Path("/fake/state/phone-book.md")
+
+
+def test_phone_book_extra_file_in_layout() -> None:
+    from open_strix.config import RepoLayout
+
+    layout = RepoLayout(home=Path("/fake"), state_dir_name="state")
+    assert layout.phone_book_extra_file == Path("/fake/state/phone-book.extra.md")
+
+
+def test_phone_book_extra_created_on_bootstrap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    extra_path = app.layout.phone_book_extra_file
+    assert extra_path.exists()
+    content = extra_path.read_text(encoding="utf-8")
+    assert "Manual Notes" in content
+    assert "Channel Notes" in content
+    assert "External Comms" in content
+    assert "People Notes" in content
+
+
+def test_phone_book_extra_not_overwritten(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure the extra phone book is never overwritten once it exists."""
+    _stub_agent_factory(monkeypatch)
+    # Create the app once (creates the extra file)
+    app_mod.OpenStrixApp(tmp_path)
+    extra_path = tmp_path / "state" / "phone-book.extra.md"
+    # Manually edit the file
+    extra_path.write_text("My custom notes", encoding="utf-8")
+    # Create app again (simulates restart)
+    app_mod.OpenStrixApp(tmp_path)
+    assert extra_path.read_text(encoding="utf-8") == "My custom notes"

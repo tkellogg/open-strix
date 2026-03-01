@@ -42,6 +42,40 @@ text: |
   When you have a persona, a schedule, and you're doing useful work — delete this block.
 """
 
+DEFAULT_PHONE_BOOK_EXTRA = """\
+# Phone Book — Manual Notes
+
+This file is for manually curated context that the auto-generated `phone-book.md` can't capture.
+Edit freely — this file is never overwritten by the bot.
+
+## Channel Notes
+
+<!-- Add notes about what each channel is for, who hangs out there, and any conventions. -->
+<!-- Example:
+| Channel | Purpose | Notes |
+|---------|---------|-------|
+| #general | Main chat | Keep it casual, Tim checks this most |
+| #research | Paper discussion | Verge posts arXiv finds here |
+-->
+
+## External Comms
+
+<!-- Other communication channels outside Discord — Bluesky, Slack, email, etc. -->
+<!-- Example:
+| Platform | Handle/Link | Notes |
+|----------|-------------|-------|
+| Bluesky | @handle.bsky.social | Main public posting account |
+-->
+
+## People Notes
+
+<!-- Context about people that IDs and names don't capture — roles, preferences, relationships. -->
+<!-- Example:
+- **Tim** — The human. Eastern time. ADHD. Prefers autonomy-supportive language.
+- **Lily** — Runs Atlas. Marketing ops. Based in Atlanta.
+-->
+"""
+
 DEFAULT_PRE_COMMIT_SCRIPT = """\
 def main() -> None:
     # Placeholder script for project-specific pre-commit checks.
@@ -65,6 +99,10 @@ class RepoLayout:
     @property
     def phone_book_file(self) -> Path:
         return self.state_dir / "phone-book.md"
+
+    @property
+    def phone_book_extra_file(self) -> Path:
+        return self.state_dir / "phone-book.extra.md"
 
     @property
     def blocks_dir(self) -> Path:
@@ -197,6 +235,7 @@ def bootstrap_home_repo(layout: RepoLayout, checkpoint_text: str) -> None:
     _write_if_missing(layout.blocks_dir / "init.yaml", DEFAULT_INIT_BLOCK)
     (layout.skills_dir / ".gitkeep").touch(exist_ok=True)
     (layout.scripts_dir / ".gitkeep").touch(exist_ok=True)
+    _write_if_missing(layout.phone_book_extra_file, DEFAULT_PHONE_BOOK_EXTRA)
     _write_if_missing(layout.config_file, DEFAULT_CONFIG)
     _ensure_config_defaults(layout.config_file)
     _write_if_missing(layout.scheduler_file, DEFAULT_SCHEDULER)
