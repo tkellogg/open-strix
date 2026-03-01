@@ -6,6 +6,12 @@ schedule first. This guide is for when you're ready to extend.
 
 ## When to Create a Skill
 
+The **skill-creator builtin skill** (`/.open_strix_builtin_skills/skill-creator/SKILL.md`)
+covers the mechanics of writing good skills — trigger descriptions, authoring checklist,
+file structure. Read it when you're ready to build one.
+
+The harder question is **when** to build one:
+
 Create a skill when you notice a repeated pattern:
 - You keep doing the same multi-step task → automate it
 - A domain requires context you won't remember → document it
@@ -14,39 +20,7 @@ Create a skill when you notice a repeated pattern:
 **Don't create a skill when:**
 - The task has only happened once (wait for repetition)
 - A memory block or state file would suffice (skills are for procedures, not context)
-- A builtin skill already covers it (check first)
-
-### Skill Design
-
-The SKILL.md `description` field determines when the skill loads. Make it specific:
-
-```yaml
-# Good — clear trigger
-description: >
-  Post to Bluesky. Use when composing posts, replies, or threads.
-  NOT for reading Bluesky (use fetch tools directly).
-
-# Bad — too vague
-description: Social media management
-```
-
-**Include failure modes.** Document what goes wrong so you don't rediscover it:
-```markdown
-## Common Errors
-- Posts over 300 characters are silently truncated
-- CIDs must be fetched fresh each session
-- Use absolute paths: `cd /home/botuser/agent-name && ...`
-```
-
-**Examples over instructions.** Show the exact commands, not descriptions of commands.
-
-### Skill lifecycle
-
-1. Notice a repeated need
-2. Write a minimal SKILL.md — just enough to execute
-3. After failures, add error handling and pitfalls
-4. Stabilizes within a week of active use
-5. If it grows too large, split into focused sub-skills
+- A builtin skill already covers it (check your builtin skills first)
 
 ## Environmental Awareness
 

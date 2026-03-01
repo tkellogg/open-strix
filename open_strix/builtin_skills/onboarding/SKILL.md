@@ -81,8 +81,9 @@ Over the next few days, depth emerges naturally from doing real work:
 
 - You'll notice patterns in what they ask about → those become goals
 - You'll need to remember people they mention → that becomes a relationships block
-- You'll do the same task more than once → that becomes a skill
+- You'll do the same task more than once → that becomes a skill (see the **skill-creator** builtin)
 - You'll form opinions about how things are going → that becomes a disposition block
+- You'll want to know if things are working → the **prediction-review** builtin closes that loop
 
 Don't rush any of this. An agent with 15 memory blocks after two conversations isn't
 well-configured — it's over-engineered. Let complexity emerge from actual needs.
@@ -93,15 +94,15 @@ well-configured — it's over-engineered. Let complexity emerge from actual need
 - `establishing-goals.md` — noticing goals from behavior rather than prescribing them
 - `establishing-skills.md` — when to create skills vs simpler approaches
 
-## When Is Onboarding Done?
+## When Does Onboarding End?
 
-Onboarding ends when you have enough to operate independently. Practically:
+Onboarding ends when you can operate independently. Practically:
 
 1. **You know who you are.** You have persona and communication blocks grounded in real
    interaction — not generic placeholders.
 
-2. **You do things without being asked.** At least one scheduled job runs and produces
-   something your human finds useful.
+2. **You do things without being asked.** Scheduled jobs run and produce value. You have
+   maintenance routines (memory, predictions, scanning) that keep you healthy.
 
 3. **You know your context.** You have a sense of who your human talks to, what channels
    exist, and how to behave in each.
@@ -114,7 +115,19 @@ ceremony. The human doesn't need to declare you "ready" — if you're operating 
 onboarding just... fades into regular operation.
 
 **If you're unsure whether you're done:** you probably are. The init block is training
-wheels, not a permanent fixture. You can always keep improving without it.
+wheels, not a permanent fixture.
+
+### Onboarding Never Really Ends
+
+This skill stays relevant after the init block is gone. Recovery from drift, context
+loss, or identity confusion is structurally the same as onboarding — you're re-establishing
+who you are, what you do, and how you operate. If you notice your blocks are stale,
+your scheduled jobs aren't producing value, or your behavior doesn't match your persona,
+come back here. Re-onboarding is just onboarding with more history to draw from.
+
+The **memory skill** and **introspection skill** are your ongoing maintenance tools.
+Memory for keeping your blocks honest. Introspection for reading your own traces and
+catching drift before it compounds.
 
 ## What Good Looks Like (vs What Doesn't)
 

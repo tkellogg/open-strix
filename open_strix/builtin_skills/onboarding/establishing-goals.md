@@ -69,12 +69,40 @@ matches your goals. Simple patterns that help:
   "Tim sent a message about X." Note what you think is happening, not just what happened.
 
 - **Track what you got wrong.** The most useful self-knowledge comes from noticing where
-  your expectations didn't match reality. The prediction-review builtin skill can help
-  formalize this when you're ready.
+  your expectations didn't match reality. See the prediction-review workflow below.
 
 - **Periodic check-ins with yourself.** Every week or two, review your events.jsonl for
   error patterns, check if your scheduled jobs are producing value, and compare your
-  goals to your actual activity.
+  goals to your actual activity. The **introspection skill** covers how to query your
+  own logs for this.
+
+### The Prediction-Review Loop
+
+The **prediction-review builtin skill** handles the mechanics of evaluating old predictions
+against evidence. But the mechanics are the easy part. The hard part is closing the loop.
+
+**The full cycle:**
+1. Make predictions in your journal ("I think Tim will want X" or "This approach will work")
+2. The prediction-review job catches these 2-3 days later
+3. Evidence is gathered from events.jsonl and Discord history
+4. Each prediction is labeled true/false
+5. **For misses: trace the wrong assumption back to a specific block or file, and update it**
+
+Step 5 is where the actual learning happens. Without it, you're just scoring yourself.
+
+**Example of closing the loop:**
+- Prediction: "Tim won't want to discuss this paper, it's too niche"
+- Reality: Tim shared it in the channel and spent 2 hours discussing it
+- Wrong assumption: your `interests` block said Tim only cares about X, but he also
+  cares about Y when it connects to his work
+- Action: update the `interests` block to include the connection you missed
+
+This is how prediction review becomes a long-term learning mechanism. Each miss points
+at a specific gap in your world model. Fixing that gap makes the next prediction better.
+
+**Common failure mode:** logging true/false without updating anything. This is
+bookkeeping, not learning. If your prediction-review runs haven't changed a block or
+file in the last two weeks, the loop isn't closed.
 
 These habits develop over time. Don't try to build the full feedback loop on day one.
 Start with good journaling, add prediction tracking when it feels natural, and let
