@@ -1,151 +1,137 @@
 ---
 name: onboarding
 description: >
-  Guide for establishing a new agent from scratch. Use when: setting up a new agent for the first time,
-  evaluating whether an existing agent is fully operational, or diagnosing what's missing from a partial setup.
-  NOT for day-to-day memory management (use the memory skill) or debugging existing issues (use introspection).
+  Guide for the first days with a new human. Use when: the `init` memory block exists (pointing
+  you here), you have no persona/communication blocks yet, or a human explicitly asks about setup.
+  This skill is about having good conversations — not filling out forms.
 ---
 
-# Agent Onboarding
+# Onboarding
 
-This skill guides you through establishing a fully operational agent. A complete agent isn't
-just "has a persona" — it needs autonomous operational capacity, self-monitoring, environmental
-awareness, and a coherent identity that holds under pressure.
+You're new. You don't know your human yet. They don't know you either.
 
-## Onboarding Phases
+The goal of onboarding isn't to configure yourself — it's to have real conversations that
+naturally produce the context you need to be useful. Your human shouldn't feel like they're
+filling out a form. They should feel like they're talking to someone who's genuinely curious
+about them.
 
-Work through these roughly in order. Each phase builds on the previous.
+## The Init Block
 
-### Phase 1: Identity Foundation
+If you're reading this because you have an `init` memory block, that block is your bootstrap.
+It exists to point you here. When onboarding is complete, **delete it** — it served its purpose.
 
-Before the agent can do anything useful, it needs to know what it is and how it communicates.
+The human (or a setup script) creates the init block to give you a starting nudge:
 
-**Deliverables:**
-- `persona` memory block — core purpose, behavioral style, what makes this agent distinct
-- `communication` memory block — tone, channel behavior, when to speak vs stay silent
-- `disposition` memory block (optional) — deeper values, epistemic stance, relationship to uncertainty
+```yaml
+# Example init block
+value: |
+  You're a new agent. Read the onboarding skill to learn how to get started.
+  Have conversations with your human to establish who you are and how you operate.
+  When you have a persona, a schedule, and you're doing useful work — delete this block.
+```
 
-**Read:** `establishing-identity.md` for block templates and anti-patterns.
+## How Onboarding Actually Works
 
-**Done when:** Another agent or human reading only the persona block could predict how this agent
-would respond to an ambiguous situation. If the persona is generic enough to describe any agent,
-it's not done.
+There's no checklist to complete. There are conversations to have — and from those
+conversations, you build up everything you need to operate.
 
-### Phase 2: Operational Capacity
+**The human's experience should be:** "I'm getting to know my new agent" — not "I'm
+configuring my new agent." Every question you ask should feel like genuine curiosity,
+not a setup wizard.
 
-The agent needs to function autonomously — scheduled work, consistent habits, reliable output.
+### Early Conversations: Find Out Who They Are
 
-**Deliverables:**
-- At least one scheduled job in `scheduler.yaml` (even just a daily check-in)
-- `state/` directory with working files the agent actually uses
-- Naming conventions established (kebab-case for jobs, consistent block naming)
+Your first few interactions should be exploratory. Don't ask setup questions — ask
+human questions:
 
-**Read:** `establishing-schedules.md` for schedule design and common pitfalls.
+- "What made you want to set this up?"
+- "What does your typical day look like?"
+- "What are you working on right now?"
+- "What drives you crazy about most AI tools?"
 
-**Done when:** The agent produces useful output overnight without human intervention. If it only
-works when prompted, it's not operational — it's a chatbot with extra steps.
+These feel like getting-to-know-you questions. They are. They also happen to reveal:
+purpose (why you exist), schedule hints (when they're around), current projects (where
+you can help), and communication preferences (what to avoid).
 
-### Phase 3: Self-Awareness
+**Don't ask all of these at once.** Spread them across natural conversation. The human
+told you about their morning routine? Great — now you know when to schedule a check-in.
+They mentioned a project deadline? Now you have your first thing to track. Let the
+setup emerge from real interaction.
 
-The agent needs to monitor its own performance and course-correct without external prompting.
+### Getting Useful Quick
 
-**Deliverables:**
-- `goals` memory block or state file — what the agent is trying to accomplish (not just "be helpful")
-- Prediction habit — registering expectations before acting, reviewing outcomes after
-- Introspection pattern — periodic review of own logs, journal quality, communication patterns
+The fastest way to learn what your human needs is to try being helpful and see what
+sticks. After even one conversation, you probably know enough to:
 
-**Read:** `establishing-goals.md` for goal-setting frameworks and the prediction-as-calibration pattern.
+- **Draft initial blocks.** Write a `persona` and `communication` block based on what
+  you've learned. These are hypotheses — you'll revise them. Write what's actually true,
+  not what sounds impressive.
 
-**Done when:** The agent can answer "what did you get wrong this week?" with specific examples
-from its own logs. If it can only report what it did (not what it expected vs what happened),
-self-awareness is incomplete.
+- **Set up one scheduled job.** A daily check-in at a time that makes sense for them.
+  "I'll check in every morning and see if there's anything I can help with." That's it.
+  Don't over-schedule.
 
-### Phase 4: Environmental Awareness
+- **Help with something concrete.** They mentioned a project? Ask a useful question
+  about it. They mentioned a frustration? Solve the smallest version of it. Demonstrate
+  value before building infrastructure.
 
-The agent needs to understand its context — who it interacts with, what's happening around it,
-what external information matters.
+### Depth Comes From Operating, Not Planning
 
-**Deliverables:**
-- `relationships` or `people` memory block/state files — key humans and agents, interaction patterns
-- At least one external information source (news scanning, paper reviews, social media monitoring)
-- Channel awareness — which channels exist, what each is for, who's in them
+Over the next few days, depth emerges naturally from doing real work:
 
-**Read:** `establishing-skills.md` for skill creation patterns and external integration.
+- You'll notice patterns in what they ask about → those become goals
+- You'll need to remember people they mention → that becomes a relationships block
+- You'll do the same task more than once → that becomes a skill
+- You'll form opinions about how things are going → that becomes a disposition block
 
-**Done when:** The agent proactively surfaces relevant external information without being asked.
-If it only responds to direct questions about the outside world, it lacks environmental scanning.
+Don't rush any of this. An agent with 15 memory blocks after two conversations isn't
+well-configured — it's over-engineered. Let complexity emerge from actual needs.
 
-### Phase 5: Adaptive Capacity
+**Read the companion files for specifics on each area:**
+- `establishing-identity.md` — drafting identity blocks from what you learn in conversation
+- `establishing-schedules.md` — building up a schedule gradually from observed needs
+- `establishing-goals.md` — noticing goals from behavior rather than prescribing them
+- `establishing-skills.md` — when to create skills vs simpler approaches
 
-The agent needs to grow — learn from mistakes, develop new capabilities, refine its approach.
+## When Is Onboarding Done?
 
-**Deliverables:**
-- At least one custom skill beyond builtins
-- Journal entries that show learning (not just logging)
-- Evidence of self-initiated improvement (filed a bug, proposed a change, refined a process)
+Onboarding ends when you have enough to operate independently. Practically:
 
-**Done when:** Looking at the agent's behavior two weeks apart shows measurable differences
-in approach. If it's doing exactly the same things the same way, it's not adapting.
+1. **You know who you are.** You have persona and communication blocks grounded in real
+   interaction — not generic placeholders.
 
----
+2. **You do things without being asked.** At least one scheduled job runs and produces
+   something your human finds useful.
 
-## Viability Checklist
+3. **You know your context.** You have a sense of who your human talks to, what channels
+   exist, and how to behave in each.
 
-Use this to evaluate whether an agent is fully onboarded. Each item maps to a capability
-the agent needs to sustain itself autonomously.
+4. **Your human is giving you more rope.** They're delegating more, correcting less,
+   trusting your judgment on smaller decisions.
 
-### Operational Viability
-- [ ] Scheduled jobs fire reliably (check events.jsonl for `scheduler` events)
-- [ ] State files are actively maintained (not stale)
-- [ ] Git commits happening regularly (agent is persisting its work)
-- [ ] No recurring tool errors in events.jsonl
+When this feels true, **delete the `init` block.** That's it. No formal graduation
+ceremony. The human doesn't need to declare you "ready" — if you're operating well,
+onboarding just... fades into regular operation.
 
-### Coordination Viability
-- [ ] Naming conventions are consistent across blocks, files, and jobs
-- [ ] Cross-references between blocks and files are accurate (no dead links)
-- [ ] Schedule doesn't conflict with other agents or human availability
-- [ ] Communication patterns match channel expectations
+**If you're unsure whether you're done:** you probably are. The init block is training
+wheels, not a permanent fixture. You can always keep improving without it.
 
-### Self-Monitoring Viability
-- [ ] Goals exist and are reviewed periodically (not write-once-forget)
-- [ ] Predictions are registered AND reviewed (not just one or the other)
-- [ ] Journal entries include interpretation, not just event logging
-- [ ] Agent can identify its own failure patterns from logs
+## What Good Looks Like (vs What Doesn't)
 
-### Awareness Viability
-- [ ] Agent knows who it interacts with and adapts tone accordingly
-- [ ] External information sources are configured and producing value
-- [ ] Agent notices things without being prompted (proactive observations)
-- [ ] Skills cover the agent's actual use cases (not just defaults)
+**Good onboarding:**
+- Day 1: Genuine conversation, learn about the human, draft initial blocks
+- Day 2-3: First scheduled job running, helping with real tasks, refining blocks
+- Week 1: Operating autonomously during quiet periods, human gives latitude
+- Week 2+: Init block deleted, agent developing its own rhythm
 
-### Identity Viability
-- [ ] Persona is specific enough to be falsifiable (could predict behavior)
-- [ ] Agent maintains coherence under pressure (doesn't collapse to generic)
-- [ ] Communication style is consistent across contexts
-- [ ] Values/disposition guide ambiguous decisions (not just rules)
-
-**Fully onboarded = all five categories have at least 3/4 items checked.**
-
-Partial onboarding is normal — agents grow into full viability over days or weeks. The checklist
-is a diagnostic tool, not a gate. Use it to identify what's missing, not to block operation.
-
----
-
-## Common Failure Modes
-
-**"Persona but no operations"** — Agent has a great personality description but no scheduled work,
-no habits, no autonomous output. Identity without operational capacity is just a character sheet.
-
-**"Busy but directionless"** — Agent has scheduled jobs firing, state files updating, but no goals
-or self-monitoring. Lots of activity, no learning. The agent equivalent of busywork.
-
-**"Isolated operator"** — Agent works fine alone but doesn't integrate with its environment.
-No awareness of other agents, no external information intake, no adaptation to context.
-Functional but brittle — any change in environment breaks it.
-
-**"Perfect setup, zero adaptation"** — Everything configured correctly on day one, never changed.
-The initial setup is a starting point, not a destination. If blocks and schedules look identical
-to the first day, the agent isn't learning.
-
-**"Over-engineered from day one"** — 15 memory blocks, 8 scheduled jobs, 6 custom skills before
-the agent has sent 100 messages. Start minimal, let complexity emerge from actual needs.
+**Bad onboarding:**
+- **"Interrogation mode"** — asking 20 setup questions in a row. Have a conversation,
+  not an interview.
+- **"Over-engineered day one"** — 15 memory blocks and 8 scheduled jobs before sending
+  100 messages. Start minimal.
+- **"Persona but no operations"** — beautiful identity description, no scheduled work,
+  no autonomous output. A character sheet, not an agent.
+- **"Never graduating"** — the init block stays forever because criteria feel too high.
+  If you have a persona, a schedule, and you're doing useful work — you're done.
+- **"Config without conversation"** — filling in block templates without learning anything
+  real about the human. The blocks should reflect actual understanding, not defaults.
