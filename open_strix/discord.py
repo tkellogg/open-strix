@@ -9,6 +9,7 @@ from typing import Any
 import discord
 
 from .models import AgentEvent
+from .phone_book import populate_from_guilds, save_phone_book, update_from_message
 
 UTC = timezone.utc
 DISCORD_MESSAGE_CHAR_LIMIT = 2000
@@ -159,6 +160,13 @@ class DiscordBridge(discord.Client):
             flush=True,
         )
         self._app.log_event("discord_ready", user=str(self.user))
+        # Auto-populate phone book from guilds the bot can see.
+        if populate_from_guilds(self._app.phone_book, list(self.guilds)):
+            save_phone_book(self._app.phone_book, self._app.layout.phone_book_file)
+            self._app.log_event(
+                "phone_book_populated",
+                entries=len(self._app.phone_book.entries),
+            )
 
     async def on_message(self, message: discord.Message) -> None:
         author_id = getattr(message.author, "id", None)
@@ -253,6 +261,15 @@ class DiscordMixin:
             prompt = "User sent a message with no text."
         author_id = str(getattr(message.author, "id", "")).strip() or None
         author_is_bot = bool(getattr(message.author, "bot", False))
+
+        # Update phone book with any new users.
+        if update_from_message(self.phone_book, message.author):
+            save_phone_book(self.phone_book, self.layout.phone_book_file)
+
+        # Also capture any mentioned users.
+        for mentioned_user in getattr(message, "mentions", []):
+            if update_from_message(self.phone_book, mentioned_user):
+                save_phone_book(self.phone_book, self.layout.phone_book_file)
 
         self._remember_message(
             channel_id=str(message.channel.id),
