@@ -14,6 +14,8 @@ BUILTIN_HOME_DIRNAME = ".open_strix_builtin_skills"
 def _iter_files(root: Traversable, *, prefix: str) -> list[str]:
     files: list[str] = []
     for entry in root.iterdir():
+        if entry.name == "__pycache__":
+            continue
         rel_path = f"{prefix}/{entry.name}"
         if entry.is_dir():
             files.extend(_iter_files(entry, prefix=rel_path))
