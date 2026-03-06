@@ -283,10 +283,10 @@ def render_turn_prompt(
         2) Memory blocks:
         {blocks_text}
 
-        3) Last Discord messages:
+        3) Last messages:
         {messages_text}
 
-        4) Discord channel context:
+        4) Channel context:
         {channel_context_text}
 
         5) Current message + reply channel:

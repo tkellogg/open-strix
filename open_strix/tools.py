@@ -323,7 +323,7 @@ class ToolsMixin:
             channel_id: str | None = None,
             attachment_paths: list[str] | None = None,
         ) -> str:
-            """Send a Discord message to a channel with optional file attachments."""
+            """Send a message to a channel (Discord or Mattermost) with optional file attachments."""
             resolved_attachment_paths, attachment_names = self._resolve_send_message_attachments(
                 attachment_paths,
             )
@@ -873,7 +873,7 @@ class ToolsMixin:
             message_id: str | None = None,
             channel_id: str | None = None,
         ) -> str:
-            """React to a Discord message. Defaults to the latest known message."""
+            """React to a message (Discord or Mattermost). Defaults to the latest known message."""
             if not emoji.strip():
                 return "emoji is required."
             if self.discord_client is None or not self.discord_client.is_ready():
@@ -1049,7 +1049,7 @@ class ToolsMixin:
 
         @tool("lookup")
         def lookup(query: str) -> str:
-            """Look up a Discord user or channel by name or ID.  Returns matching entries with their IDs, mention format, and type.  Use this when you need to find a channel_id or user mention format."""
+            """Look up a user or channel by name or ID.  Returns matching entries with their IDs, mention format, and type.  Use this when you need to find a channel_id or user mention format."""
             results = self.phone_book.lookup(query)
             if not results:
                 return f"No matches for '{query}'.  The phone book updates as new users and channels are discovered."

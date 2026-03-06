@@ -47,6 +47,7 @@ from .discord import (
     DiscordMixin,
     _chunk_discord_message,
 )
+from .mattermost import MattermostBridge, MattermostMixin
 from .models import AgentEvent
 from .prompts import DEFAULT_CHECKPOINT, SYSTEM_PROMPT, render_folders_section, render_turn_prompt
 from .readonly_backend import BUILTIN_SKILLS_ROUTE, build_builtin_skills_backend
@@ -284,7 +285,7 @@ class WriteGuardBackend:
         return self.upload_files(files)
 
 
-class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
+class OpenStrixApp(DiscordMixin, MattermostMixin, SchedulerMixin, ToolsMixin):
     def __init__(self, home: Path) -> None:
         self.home = home.resolve()
         self.layout = RepoLayout(home=self.home, state_dir_name=STATE_DIR_NAME)
@@ -314,6 +315,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.fetch_cache_dir = Path(tempfile.mkdtemp(prefix="fetch-cache-", dir=self.layout.logs_dir))
 
         self.discord_client: DiscordBridge | None = None
+        self.mattermost_client: MattermostBridge | None = None
         self.api_runner: Any | None = None
         self.worker_task: asyncio.Task[Any] | None = None
         self._current_turn_sent_messages: list[tuple[str, str]] | None = None
@@ -799,11 +801,42 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
 
             self.api_runner = await start_api(self, self.config.api_port)
 
-        token = os.getenv(self.config.discord_token_env, "")
-        if token:
+        discord_token = os.getenv(self.config.discord_token_env, "")
+        mattermost_token = os.getenv(self.config.mattermost_token_env, "")
+        mattermost_enabled = bool(self.config.mattermost_url and mattermost_token)
+
+        if discord_token and mattermost_enabled:
+            # Run both bridges concurrently.
+            self.discord_client = DiscordBridge(self)
+            self.mattermost_client = MattermostBridge(
+                self,
+                url=self.config.mattermost_url,
+                token=mattermost_token,
+                bot_user_id=self.config.mattermost_bot_user_id,
+            )
+            self.log_event("discord_connecting")
+            self.log_event("mattermost_connecting")
+            await asyncio.gather(
+                self.discord_client.start(discord_token),
+                self.mattermost_client.start(),
+            )
+            return
+
+        if discord_token:
             self.discord_client = DiscordBridge(self)
             self.log_event("discord_connecting")
-            await self.discord_client.start(token)
+            await self.discord_client.start(discord_token)
+            return
+
+        if mattermost_enabled:
+            self.mattermost_client = MattermostBridge(
+                self,
+                url=self.config.mattermost_url,
+                token=mattermost_token,
+                bot_user_id=self.config.mattermost_bot_user_id,
+            )
+            self.log_event("mattermost_connecting")
+            await self.mattermost_client.start()
             return
 
         await self._stdin_mode()
@@ -816,6 +849,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             await self.api_runner.cleanup()
         if self.discord_client is not None and not self.discord_client.is_closed():
             await self.discord_client.close()
+        if self.mattermost_client is not None and not self.mattermost_client.is_closed():
+            self.mattermost_client.close()
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
         if self.worker_task is not None:

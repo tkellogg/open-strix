@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -1320,6 +1320,19 @@ wheels = [
 ]
 
 [[package]]
+name = "mattermostdriver"
+version = "7.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b7/01/3a62b245848e95eda10525dd47b50cc97f6171a6902fbff95f7d182afea6/mattermostdriver-7.3.2.tar.gz", hash = "sha256:2e4d7b4a17d3013e279c6f993746ea18cd60b45d8fa3be24f47bc2de22b9b3b4", size = 22144, upload-time = "2022-01-21T14:24:04.419Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/2b/c03ca96c2870c2e28e5407303ee6c23c14db748b6e97646a10368061371e/mattermostdriver-7.3.2-py3-none-any.whl", hash = "sha256:8c6f15da34873b6c88da8fa8da0342f94bef77fcd16294befd92fea7e008cd97", size = 25087, upload-time = "2022-01-21T14:24:03.369Z" },
+]
+
+[[package]]
 name = "mcp"
 version = "1.26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1549,6 +1562,7 @@ dependencies = [
     { name = "deepagents" },
     { name = "discord-py" },
     { name = "matplotlib" },
+    { name = "mattermostdriver" },
     { name = "mcp" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -1567,6 +1581,7 @@ requires-dist = [
     { name = "deepagents", specifier = ">=0.4.1" },
     { name = "discord-py", specifier = ">=2.6.4" },
     { name = "matplotlib", specifier = ">=3.8" },
+    { name = "mattermostdriver", specifier = ">=7.3.2" },
     { name = "mcp", specifier = ">=1.26.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },

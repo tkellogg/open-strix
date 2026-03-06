@@ -31,6 +31,12 @@ folders:
   skills: rw
   scripts: ro
   logs: ro
+# Mattermost integration (optional — leave mattermost_url empty to disable)
+# mattermost_url: "https://chat.example.com"
+# mattermost_token_env: MATTERMOST_TOKEN
+# mattermost_bot_user_id: ""
+# mattermost_messages_in_prompt: 10
+# mattermost_team_id: ""
 """
 
 DEFAULT_SCHEDULER = """\
@@ -173,6 +179,11 @@ class AppConfig:
     api_port: int = 0
     folders: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_FOLDERS))
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
+    mattermost_url: str = ""
+    mattermost_token_env: str = "MATTERMOST_TOKEN"
+    mattermost_bot_user_id: str = ""
+    mattermost_messages_in_prompt: int = 10
+    mattermost_team_id: str = ""
 
     @property
     def writable_dirs(self) -> list[str]:
@@ -235,6 +246,11 @@ def load_config(layout: RepoLayout) -> AppConfig:
         api_port=int(loaded.get("api_port", 0)),
         folders=_parse_folders(loaded.get("folders")),
         mcp_servers=parse_mcp_server_configs(loaded.get("mcp_servers")),
+        mattermost_url=str(loaded.get("mattermost_url", "") or "").strip(),
+        mattermost_token_env=str(loaded.get("mattermost_token_env", "MATTERMOST_TOKEN")),
+        mattermost_bot_user_id=str(loaded.get("mattermost_bot_user_id", "") or "").strip(),
+        mattermost_messages_in_prompt=int(loaded.get("mattermost_messages_in_prompt", 10)),
+        mattermost_team_id=str(loaded.get("mattermost_team_id", "") or "").strip(),
     )
 
 
