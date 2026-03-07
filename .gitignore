@@ -12,3 +12,6 @@ wheels/
 # Standard stuff
 .env
 CLAUDE.md
+
+# OS Files
+.DS_Store
