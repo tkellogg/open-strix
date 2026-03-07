@@ -387,6 +387,23 @@ class DiscordMixin:
         return added
 
     async def _save_attachments(self, message: discord.Message) -> list[str]:
+        """Save attachments to disk, returning file paths (NOT inline content).
+
+        Design: Attachments are stored as files and referenced by path in prompts,
+        never embedded directly into prompt content. This is intentional:
+
+        1. Poison pill avoidance — A malformed or adversarial image/file could cause
+           an LLM to error, hallucinate, or behave unexpectedly if injected inline.
+           Keeping attachments in files lets the agent opt into reading them via skills
+           or tools, rather than being forced to process them.
+
+        2. Model compatibility — Not all LLMs support images (e.g. MiniMax M2.5 is
+           text-only). File paths work universally; inline images crash text-only models.
+
+        3. Agent autonomy — The agent can decide how/whether to examine an attachment
+           (e.g. via a viewing skill that offers base64, OCR, or conversion options)
+           rather than having raw content forced into its context window.
+        """
         if not message.attachments:
             return []
         attachments_dir = self.layout.state_dir / "attachments"
