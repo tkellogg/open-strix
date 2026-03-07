@@ -38,6 +38,7 @@ from .config import (
 )
 from .mcp_client import MCPManager
 from .phone_book import load_phone_book
+from .reflection import ReflectionHook
 from .discord import (
     DISCORD_HISTORY_REFRESH_LIMIT,
     DISCORD_MESSAGE_CHAR_LIMIT,
@@ -327,6 +328,15 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
 
         self.phone_book = load_phone_book(self.layout.phone_book_file)
         self.mcp_manager: MCPManager | None = None
+        self.reflection_hook: ReflectionHook | None = None
+        if self.config.reflection.enabled:
+            self.reflection_hook = ReflectionHook(
+                home=self.home,
+                questions_file=self.config.reflection.questions_file,
+                model=self.config.model,
+                log_fn=self.log_event,
+                react_fn=self._react_to_message,
+            )
         self.agent = self._create_agent()
 
     def _create_agent(self, extra_tools: list[Any] | None = None) -> Any:
