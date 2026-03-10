@@ -55,7 +55,7 @@ uv run open-strix
 `open-strix setup` bootstraps the target directory with:
 
 - `state/`, `skills/`, `blocks/` — agent workspace directories
-- `logs/events.jsonl`, `logs/journal.jsonl` — event and journal logs
+- `logs/events.jsonl`, `logs/chat-history.jsonl`, `logs/journal.jsonl` — event, chat transcript, and journal logs
 - `scheduler.yaml` — scheduled job definitions
 - `config.yaml` — model and runtime configuration
 - `checkpoint.md` — post-journal reflection prompt
@@ -183,6 +183,8 @@ Any model with an Anthropic-compatible API works. Just set `ANTHROPIC_BASE_URL` 
 
 ## Discord setup
 
+Optional if you only want to use the built-in local web UI.
+
 Use Discord's [Developer Portal](https://discord.com/developers/applications):
 
 1. **General Information:** Set app/bot name and basic metadata.
@@ -216,6 +218,10 @@ journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
 always_respond_bot_ids: []
+api_port: 0
+web_ui_port: 0
+web_ui_host: 127.0.0.1
+web_ui_channel_id: local-web
 folders:
   state: rw
   skills: rw
@@ -231,8 +237,28 @@ folders:
 | `discord_messages_in_prompt` | Recent Discord messages in each prompt |
 | `discord_token_env` | Env var name for Discord token |
 | `always_respond_bot_ids` | Bot author IDs the agent responds to |
+| `api_port` | Loopback REST API port (`0` disables it) |
+| `web_ui_port` | Local web chat port (`0` disables it) |
+| `web_ui_host` | Bind host for the web UI (default `127.0.0.1`) |
+| `web_ui_channel_id` | Synthetic channel ID used by the built-in web chat |
 | `folders` | Map of folder names to access mode (`rw` or `ro`) |
 | `mcp_servers` | List of MCP server configs (see below) |
+
+### Local web chat
+
+To enable the built-in 1:1 web UI:
+
+```yaml
+web_ui_port: 8084
+web_ui_host: 127.0.0.1
+web_ui_channel_id: local-web
+```
+
+Then open `http://127.0.0.1:8084/`.
+
+- The UI supports text, pictures, and file attachments.
+- `send_message` replies land in the reserved `web_ui_channel_id`.
+- If you want to reach it from another device on your network, set `web_ui_host: 0.0.0.0`.
 
 ### Folders
 

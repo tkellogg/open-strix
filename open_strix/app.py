@@ -58,6 +58,7 @@ from .tools import (
     SendMessageCircuitBreakerStop,
     ToolsMixin,
 )
+from .web_ui import WebChatMixin
 
 UTC = timezone.utc
 LOG_ROLL_BYTES = 1_000_000
@@ -108,6 +109,28 @@ def _model_for_deep_agents(model_name: str) -> str:
     if ":" in cleaned:
         return cleaned
     return f"{DEFAULT_MODEL_PROVIDER}:{cleaned}"
+
+
+def _web_ui_url(host: str, port: int) -> str:
+    display_host = host.strip() or "127.0.0.1"
+    if display_host == "0.0.0.0":
+        display_host = "127.0.0.1"
+    return f"http://{display_host}:{port}/"
+
+
+def _humanize_local_web_error(exc: Exception) -> str:
+    raw = str(exc).strip() or type(exc).__name__
+    if "Could not resolve authentication method" in raw:
+        return (
+            "I couldn't reach the configured model because no API credentials are set. "
+            "Add `ANTHROPIC_API_KEY` to `.env` and set `ANTHROPIC_BASE_URL` if you're not using the default MiniMax endpoint, then try again."
+        )
+    if len(raw) > 280:
+        raw = raw[:280].rstrip() + "..."
+    return (
+        "I hit an internal error while processing that message. "
+        f"Check `logs/events.jsonl` for details. Error: {raw}"
+    )
 
 
 def _skill_name_from_file(path: Path) -> str:
@@ -284,7 +307,7 @@ class WriteGuardBackend:
         return self.upload_files(files)
 
 
-class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
+class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
     def __init__(self, home: Path) -> None:
         self.home = home.resolve()
         self.layout = RepoLayout(home=self.home, state_dir_name=STATE_DIR_NAME)
@@ -314,11 +337,13 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.message_history_by_channel: dict[str, deque[dict[str, Any]]] = defaultdict(
             lambda: deque(maxlen=250),
         )
+        self._load_chat_history()
         # Session-scoped cache for fetched web content; cleaned up on shutdown.
         self.fetch_cache_dir = Path(tempfile.mkdtemp(prefix="fetch-cache-", dir=self.layout.logs_dir))
 
         self.discord_client: DiscordBridge | None = None
         self.api_runner: Any | None = None
+        self.web_ui_runner: Any | None = None
         self.worker_task: asyncio.Task[Any] | None = None
         self._current_turn_sent_messages: list[tuple[str, str]] | None = None
         self.send_message_loop_soft_limit = SEND_MESSAGE_LOOP_SOFT_LIMIT
@@ -332,6 +357,68 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self.phone_book = load_phone_book(self.layout.phone_book_file)
         self.mcp_manager: MCPManager | None = None
         self.agent = self._create_agent()
+
+    def _load_chat_history(self) -> None:
+        path = self.layout.chat_history_log
+        if not path.exists():
+            return
+
+        with path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+
+                record_type = str(record.get("type", "")).strip()
+                if record_type == "message":
+                    channel_id = str(record.get("channel_id", "")).strip()
+                    author = str(record.get("author", "")).strip()
+                    if not channel_id or not author:
+                        continue
+                    attachments = record.get("attachments")
+                    self._remember_message(
+                        channel_id=channel_id,
+                        author=author,
+                        content=str(record.get("content", "")),
+                        attachment_names=[
+                            str(item).strip()
+                            for item in attachments
+                            if str(item).strip()
+                        ]
+                        if isinstance(attachments, list)
+                        else [],
+                        message_id=str(record.get("message_id", "")).strip() or None,
+                        is_bot=bool(record.get("is_bot")),
+                        source=str(record.get("source", "discord")).strip() or "discord",
+                        timestamp=str(record.get("timestamp", "")).strip() or None,
+                        reactions=[
+                            str(item).strip()
+                            for item in record.get("reactions", [])
+                            if str(item).strip()
+                        ]
+                        if isinstance(record.get("reactions"), list)
+                        else [],
+                        persist=False,
+                    )
+                    continue
+
+                if record_type == "reaction":
+                    channel_id = str(record.get("channel_id", "")).strip()
+                    message_id = str(record.get("message_id", "")).strip()
+                    emoji = str(record.get("emoji", "")).strip()
+                    if not channel_id or not message_id or not emoji:
+                        continue
+                    self._apply_reaction_to_memory(
+                        channel_id=channel_id,
+                        message_id=message_id,
+                        emoji=emoji,
+                    )
 
     def _create_agent(self, extra_tools: list[Any] | None = None) -> Any:
         """Build the LangGraph agent with all tools."""
@@ -557,16 +644,25 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             self.config.journal_entries_in_prompt,
         )
         blocks = self._load_blocks_for_prompt()
-        recent_messages = [
+        recent_candidates = [
             item
             for item in self.message_history_all
-            if item.get("source") == "discord"
-        ][-self.config.discord_messages_in_prompt :]
+            if item.get("source") in {"discord", "web", "stdin"}
+        ]
+        if event.channel_id:
+            channel_recent = [
+                item
+                for item in recent_candidates
+                if item.get("channel_id") == event.channel_id
+            ]
+            if channel_recent:
+                recent_candidates = channel_recent
+        recent_messages = recent_candidates[-self.config.discord_messages_in_prompt :]
 
         return render_turn_prompt(
             journal_entries=journal_entries,
             memory_blocks=blocks,
-            discord_messages=recent_messages,
+            recent_messages=recent_messages,
             current_event={
                 "event_type": event.event_type,
                 "prompt": event.prompt,
@@ -614,18 +710,32 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
                     emoji=ERROR_REACTION_EMOJI,
                     include_bot=False,
                 )
+                error_message_sent = False
+                if self.is_local_web_channel(event.channel_id):
+                    error_message_sent = await self._send_local_web_error_message(event, exc)
                 self.log_event(
                     "error",
                     where="event_worker",
                     source_event_type=event.event_type,
                     error=str(exc),
                     reacted_to_last_user_message=reacted,
+                    error_message_sent=error_message_sent,
                 )
             finally:
                 if event.dedupe_key:
                     self.pending_scheduler_keys.discard(event.dedupe_key)
                 self.current_channel_id = None
                 self.queue.task_done()
+
+    async def _send_local_web_error_message(self, event: AgentEvent, exc: Exception) -> bool:
+        if not self.is_local_web_channel(event.channel_id):
+            return False
+        text = _humanize_local_web_error(exc)
+        sent, _, _ = await self._send_web_message(
+            channel_id=str(event.channel_id),
+            text=text,
+        )
+        return sent
 
     async def _process_event(self, event: AgentEvent) -> None:
         self._current_turn_sent_messages = []
@@ -803,11 +913,37 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
 
             self.api_runner = await start_api(self, self.config.api_port)
 
+        if self.config.web_ui_port > 0:
+            from .web_ui import start_web_ui
+
+            self.web_ui_runner = await start_web_ui(
+                self,
+                host=self.config.web_ui_host,
+                port=self.config.web_ui_port,
+            )
+
         token = os.getenv(self.config.discord_token_env, "")
         if token:
             self.discord_client = DiscordBridge(self)
             self.log_event("discord_connecting")
             await self.discord_client.start(token)
+            return
+
+        if self.web_ui_runner is not None:
+            print(
+                "No Discord token configured. Local web UI available at "
+                f"{_web_ui_url(self.config.web_ui_host, self.config.web_ui_port)}",
+                flush=True,
+            )
+            await asyncio.Event().wait()
+            return
+
+        if self.api_runner is not None:
+            print(
+                "No Discord token configured. API-only mode is active.",
+                flush=True,
+            )
+            await asyncio.Event().wait()
             return
 
         await self._stdin_mode()
@@ -818,6 +954,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             await self.mcp_manager.shutdown()
         if self.api_runner is not None:
             await self.api_runner.cleanup()
+        if self.web_ui_runner is not None:
+            await self.web_ui_runner.cleanup()
         if self.discord_client is not None and not self.discord_client.is_closed():
             await self.discord_client.close()
         if self.scheduler.running:

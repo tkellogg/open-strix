@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -20,6 +21,12 @@ WARNING_REACTION_EMOJI = "⚠️"
 
 def _utc_now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
+
+
+def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
 
 
 def _channel_conversation_type(channel: Any) -> str:
@@ -179,6 +186,27 @@ class DiscordBridge(discord.Client):
 
 
 class DiscordMixin:
+    async def _send_channel_message(
+        self,
+        *,
+        channel_id: str,
+        text: str,
+        attachment_paths: list[Path] | None = None,
+        attachment_names: list[str] | None = None,
+    ) -> tuple[bool, str | None, int]:
+        if self.is_local_web_channel(channel_id):
+            return await self._send_web_message(
+                channel_id=channel_id,
+                text=text,
+                attachment_names=attachment_names,
+            )
+        return await self._send_discord_message(
+            channel_id=channel_id,
+            text=text,
+            attachment_paths=attachment_paths,
+            attachment_names=attachment_names,
+        )
+
     async def _send_discord_message(
         self,
         *,
@@ -400,6 +428,29 @@ class DiscordMixin:
             saved.append(str(target.relative_to(self.home)))
         return saved
 
+    def _append_chat_history_record(self, record: dict[str, Any]) -> None:
+        _append_jsonl(self.layout.chat_history_log, record)
+
+    def _apply_reaction_to_memory(
+        self,
+        *,
+        channel_id: str,
+        message_id: str,
+        emoji: str,
+    ) -> bool:
+        normalized_message_id = str(message_id).strip()
+        if not normalized_message_id:
+            return False
+
+        for item in reversed(self.message_history_by_channel.get(channel_id, [])):
+            if str(item.get("message_id", "")).strip() != normalized_message_id:
+                continue
+            reactions = item.setdefault("reactions", [])
+            if emoji not in reactions:
+                reactions.append(emoji)
+            return True
+        return False
+
     def _remember_message(
         self,
         channel_id: str,
@@ -410,6 +461,8 @@ class DiscordMixin:
         is_bot: bool = False,
         source: str = "discord",
         timestamp: str | None = None,
+        reactions: list[str] | None = None,
+        persist: bool = True,
     ) -> bool:
         normalized_message_id = str(message_id).strip() if message_id not in (None, "") else None
         if normalized_message_id is not None:
@@ -426,9 +479,24 @@ class DiscordMixin:
             "source": source,
             "content": content,
             "attachments": attachment_names,
+            "reactions": list(reactions or []),
         }
         self.message_history_all.append(item)
         self.message_history_by_channel[channel_id].append(item)
+        if persist:
+            self._append_chat_history_record(
+                {
+                    "timestamp": item["timestamp"],
+                    "type": "message",
+                    "channel_id": channel_id,
+                    "message_id": normalized_message_id,
+                    "author": author,
+                    "is_bot": is_bot,
+                    "source": source,
+                    "content": content,
+                    "attachments": list(attachment_names),
+                },
+            )
         return True
 
     def _latest_message_reference(
@@ -460,27 +528,53 @@ class DiscordMixin:
         message_id: str,
         emoji: str,
     ) -> bool:
-        if self.discord_client is None or not self.discord_client.is_ready():
+        if self.is_local_web_channel(channel_id):
+            reacted = await self._react_to_web_message(
+                channel_id=channel_id,
+                message_id=message_id,
+                emoji=emoji,
+            )
+        elif self.discord_client is None or not self.discord_client.is_ready():
             return False
-        try:
-            channel_int = int(channel_id)
-            message_int = int(message_id)
-        except ValueError:
+        else:
+            try:
+                channel_int = int(channel_id)
+                message_int = int(message_id)
+            except ValueError:
+                return False
+
+            channel = self.discord_client.get_channel(channel_int)
+            if channel is None:
+                channel = await self.discord_client.fetch_channel(channel_int)
+            if not hasattr(channel, "fetch_message"):
+                return False
+
+            message = await channel.fetch_message(message_int)
+            await message.add_reaction(emoji)
+            reacted = True
+
+        if not reacted:
             return False
 
-        channel = self.discord_client.get_channel(channel_int)
-        if channel is None:
-            channel = await self.discord_client.fetch_channel(channel_int)
-        if not hasattr(channel, "fetch_message"):
-            return False
-
-        message = await channel.fetch_message(message_int)
-        await message.add_reaction(emoji)
+        self._apply_reaction_to_memory(
+            channel_id=channel_id,
+            message_id=message_id,
+            emoji=emoji,
+        )
         self.log_event(
             "reaction_added",
             channel_id=channel_id,
             message_id=message_id,
             emoji=emoji,
+        )
+        self._append_chat_history_record(
+            {
+                "timestamp": _utc_now_iso(),
+                "type": "reaction",
+                "channel_id": channel_id,
+                "message_id": str(message_id),
+                "emoji": emoji,
+            },
         )
         return True
 

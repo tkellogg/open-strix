@@ -405,6 +405,7 @@ def test_cli_setup_scaffolds_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert (home / "state" / ".gitkeep").exists()
     assert (home / ".env").exists()
     assert (home / "blocks" / "init.yaml").exists()
+    assert (home / "logs" / "chat-history.jsonl").exists()
 
     init_block = yaml.safe_load((home / "blocks" / "init.yaml").read_text(encoding="utf-8"))
     assert init_block["name"] == "init"
@@ -416,6 +417,8 @@ def test_cli_setup_scaffolds_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert "DISCORD_TOKEN=" in env_text
     pyproject_text = (home / "pyproject.toml").read_text(encoding="utf-8")
     assert "open-strix" in pyproject_text
+    gitignore_text = (home / ".gitignore").read_text(encoding="utf-8")
+    assert "logs/chat-history.jsonl" in gitignore_text
 
     scheduler = yaml.safe_load((home / "scheduler.yaml").read_text(encoding="utf-8"))
     assert isinstance(scheduler, dict)

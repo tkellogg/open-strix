@@ -2,6 +2,8 @@
 
 open-strix logs every significant event to `logs/events.jsonl`. This is the agent's self-diagnosis backbone — a complete record of what happened, when, and why. The agent can read its own event log, and the [introspection skill](../open_strix/builtin_skills/introspection/SKILL.md) teaches it how.
 
+Conversation history is also persisted separately in `logs/chat-history.jsonl` as an append-only transcript of messages and reactions across Discord, the local web UI, and stdin sessions.
+
 ## Event Format
 
 Every event is a single JSON line:
@@ -46,6 +48,11 @@ Events that track the agent process starting, connecting, and shutting down.
 {"type": "api_started", "port": 8082}
 ```
 
+**`web_ui_started`** — Built-in local web chat is listening.
+```json
+{"type": "web_ui_started", "host": "127.0.0.1", "port": 8084, "channel_id": "local-web"}
+```
+
 **`app_shutdown_start`** / **`app_shutdown_complete`** — Graceful shutdown.
 
 **`stdin_mode_start`** / **`stdin_mode_eof`** — Running without Discord (local testing).
@@ -64,6 +71,21 @@ Events that track the agent process starting, connecting, and shutting down.
 }
 ```
 The `content` field contains the full message text.
+
+**`web_message`** — Incoming message from the built-in local web chat.
+```json
+{
+  "type": "web_message",
+  "channel_id": "local-web",
+  "author": "local_user",
+  "author_id": "local-web-user",
+  "channel_name": "Local Web",
+  "channel_conversation_type": "dm",
+  "channel_visibility": "private",
+  "attachment_names": ["state/attachments/web/web-abc123-1-photo.png"],
+  "content": "check this screenshot"
+}
+```
 
 ### Queue Events
 
@@ -309,6 +331,41 @@ api_port: 8082  # 0 = disabled (default)
 
 The API binds to `127.0.0.1` only — not accessible from the network. For external access, put it behind a reverse proxy with authentication.
 
+## Local Web UI
+
+When `web_ui_port` is set in `config.yaml` (default: `0` = disabled), open-strix serves a built-in 1:1 chat UI.
+
+### `GET /`
+
+Returns the browser chat UI.
+
+### `GET /api/messages`
+
+Returns the current `local-web` transcript plus a boolean `is_processing` flag.
+
+### `POST /api/messages`
+
+Queues a user message from the browser. Supports either JSON:
+
+```json
+{"text": "hello from the browser"}
+```
+
+or multipart form data with `text` plus one or more `files`.
+
+### `GET /files/{path}`
+
+Serves a file attachment that was already shared in the `local-web` conversation.
+
+### Configuration
+
+In `config.yaml`:
+```yaml
+web_ui_port: 8084          # 0 = disabled (default)
+web_ui_host: 127.0.0.1     # set 0.0.0.0 if you want LAN access
+web_ui_channel_id: local-web
+```
+
 ### Use Cases
 
 - **Bluesky pollers** — external script monitors notifications, sends relevant ones to the agent via API
@@ -325,6 +382,38 @@ In addition to events.jsonl, each agent turn creates a detailed session log at `
 - Event metadata
 
 Session logs auto-clean after `session_log_retention_days` (default: 30 days).
+
+## Chat History (chat-history.jsonl)
+
+This file is append-only. Each line is either a message record or a reaction record.
+
+Message example:
+
+```json
+{
+  "timestamp": "2026-03-01T14:30:00.123456+00:00",
+  "type": "message",
+  "channel_id": "local-web",
+  "message_id": "web-abc123",
+  "author": "local_user",
+  "is_bot": false,
+  "source": "web",
+  "content": "check this screenshot",
+  "attachments": ["state/attachments/web/web-abc123-1-shot.png"]
+}
+```
+
+Reaction example:
+
+```json
+{
+  "timestamp": "2026-03-01T14:31:00.123456+00:00",
+  "type": "reaction",
+  "channel_id": "local-web",
+  "message_id": "web-abc123",
+  "emoji": "👍"
+}
+```
 
 ## Journal (journal.jsonl)
 

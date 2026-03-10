@@ -12,10 +12,13 @@ from .mcp_client import MCPServerConfig, parse_mcp_server_configs
 DEFAULT_MODEL = "MiniMax-M2.5"
 DEFAULT_MODEL_PROVIDER = "anthropic"
 STATE_DIR_NAME = "state"
+DEFAULT_WEB_UI_HOST = "127.0.0.1"
+DEFAULT_WEB_UI_CHANNEL_ID = "local-web"
 
 DEFAULT_FOLDERS: dict[str, str] = {
     "state": "rw",
     "skills": "rw",
+    "blocks": "ro",
     "scripts": "ro",
     "logs": "ro",
 }
@@ -26,9 +29,14 @@ journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
 always_respond_bot_ids: []
+api_port: 0
+web_ui_port: 0
+web_ui_host: 127.0.0.1
+web_ui_channel_id: local-web
 folders:
   state: rw
   skills: rw
+  blocks: ro
   scripts: ro
   logs: ro
 """
@@ -146,6 +154,10 @@ class RepoLayout:
         return self.logs_dir / "journal.jsonl"
 
     @property
+    def chat_history_log(self) -> Path:
+        return self.logs_dir / "chat-history.jsonl"
+
+    @property
     def scheduler_file(self) -> Path:
         return self.home / "scheduler.yaml"
 
@@ -171,6 +183,9 @@ class AppConfig:
     always_respond_bot_ids: set[str] = field(default_factory=set)
     session_log_retention_days: int = 30
     api_port: int = 0
+    web_ui_port: int = 0
+    web_ui_host: str = DEFAULT_WEB_UI_HOST
+    web_ui_channel_id: str = DEFAULT_WEB_UI_CHANNEL_ID
     folders: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_FOLDERS))
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     disable_builtin_skills: set[str] = field(default_factory=set)
@@ -234,6 +249,10 @@ def load_config(layout: RepoLayout) -> AppConfig:
         always_respond_bot_ids=_normalize_id_list(loaded.get("always_respond_bot_ids")),
         session_log_retention_days=int(loaded.get("session_log_retention_days", 30)),
         api_port=int(loaded.get("api_port", 0)),
+        web_ui_port=int(loaded.get("web_ui_port", 0)),
+        web_ui_host=str(loaded.get("web_ui_host", DEFAULT_WEB_UI_HOST)).strip() or DEFAULT_WEB_UI_HOST,
+        web_ui_channel_id=str(loaded.get("web_ui_channel_id", DEFAULT_WEB_UI_CHANNEL_ID)).strip()
+        or DEFAULT_WEB_UI_CHANNEL_ID,
         folders=_parse_folders(loaded.get("folders")),
         mcp_servers=parse_mcp_server_configs(loaded.get("mcp_servers")),
         disable_builtin_skills=_normalize_id_list(loaded.get("disable_builtin_skills")),
@@ -254,6 +273,22 @@ def _ensure_config_defaults(config_file: Path) -> None:
 
     if "always_respond_bot_ids" not in loaded:
         loaded["always_respond_bot_ids"] = []
+        changed = True
+
+    if "api_port" not in loaded:
+        loaded["api_port"] = 0
+        changed = True
+
+    if "web_ui_port" not in loaded:
+        loaded["web_ui_port"] = 0
+        changed = True
+
+    if "web_ui_host" not in loaded:
+        loaded["web_ui_host"] = DEFAULT_WEB_UI_HOST
+        changed = True
+
+    if "web_ui_channel_id" not in loaded:
+        loaded["web_ui_channel_id"] = DEFAULT_WEB_UI_CHANNEL_ID
         changed = True
 
     if "git_sync_after_turn" in loaded:
@@ -291,6 +326,7 @@ def bootstrap_home_repo(
         layout.sessions_dir.mkdir(parents=True, exist_ok=True)
         layout.events_log.touch(exist_ok=True)
         layout.journal_log.touch(exist_ok=True)
+        layout.chat_history_log.touch(exist_ok=True)
 
     if "blocks" in folders:
         _write_if_missing(layout.blocks_dir / "init.yaml", DEFAULT_INIT_BLOCK)
@@ -374,6 +410,7 @@ def _ensure_logs_ignored(home: Path) -> None:
     gitignore_path = home / ".gitignore"
     required_entries = [
         "logs/",
+        "logs/chat-history.jsonl",
         ".env",
         f"{BUILTIN_HOME_DIRNAME}/",
         "*.png",

@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -1545,6 +1545,7 @@ name = "open-strix"
 version = "0.1.30"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "apscheduler" },
     { name = "deepagents" },
     { name = "discord-py" },
@@ -1563,6 +1564,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.12.15" },
     { name = "apscheduler", specifier = ">=3.11.2" },
     { name = "deepagents", specifier = ">=0.4.1" },
     { name = "discord-py", specifier = ">=2.6.4" },

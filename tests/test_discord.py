@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 import open_strix.app as app_mod
+import open_strix.web_ui as web_ui_mod
 from open_strix.tools import SendMessageCircuitBreakerStop
 
 
@@ -1468,6 +1469,157 @@ async def test_event_worker_reacts_to_last_user_message_on_error(
             await worker
 
     assert channel.message_by_id[777].reactions == [app_mod.ERROR_REACTION_EMOJI]
+
+
+@pytest.mark.asyncio
+async def test_event_worker_surfaces_local_web_errors_as_messages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingAgent:
+        async def ainvoke(self, _: dict[str, Any]) -> dict[str, Any]:
+            raise RuntimeError(
+                "Could not resolve authentication method. Expected either api_key or auth_token to be set.",
+            )
+
+    monkeypatch.setattr(app_mod, "create_deep_agent", lambda **_: FailingAgent())
+    app = app_mod.OpenStrixApp(tmp_path)
+    app._remember_message(
+        channel_id="local-web",
+        message_id="web-1",
+        author="local_user",
+        content="hello",
+        attachment_names=[],
+        is_bot=False,
+        source="web",
+    )
+
+    worker = asyncio.create_task(app._event_worker())
+    try:
+        await app.enqueue_event(
+            app_mod.AgentEvent(
+                event_type="web_message",
+                prompt="hello",
+                channel_id="local-web",
+                author="local_user",
+            ),
+        )
+        await asyncio.wait_for(app.queue.join(), timeout=10)
+    finally:
+        worker.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker
+
+    messages = list(app.message_history_by_channel["local-web"])
+    assert len(messages) == 2
+    assert messages[-1]["is_bot"] is True
+    assert "ANTHROPIC_API_KEY" in messages[-1]["content"]
+    assert app._latest_message_reference("local-web") == (messages[-1]["message_id"], "local-web")
+
+    error_events = [event for event in app.message_history_all if event["channel_id"] == "local-web"]
+    assert len(error_events) == 2
+
+
+@pytest.mark.asyncio
+async def test_chat_history_log_is_append_only_and_rehydrates_on_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    added = app._remember_message(
+        channel_id="local-web",
+        message_id="web-123",
+        author="local_user",
+        content="hello transcript",
+        attachment_names=["state/attachments/demo.png"],
+        is_bot=False,
+        source="web",
+    )
+    assert added is True
+
+    reacted = await app._react_to_message(
+        channel_id="local-web",
+        message_id="web-123",
+        emoji="👍",
+    )
+    assert reacted is True
+
+    history_lines = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "chat-history.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [line["type"] for line in history_lines] == ["message", "reaction"]
+    assert history_lines[0]["content"] == "hello transcript"
+    assert history_lines[0]["attachments"] == ["state/attachments/demo.png"]
+    assert history_lines[1]["emoji"] == "👍"
+
+    app_restarted = app_mod.OpenStrixApp(tmp_path)
+    restored = list(app_restarted.message_history_by_channel["local-web"])
+    assert len(restored) == 1
+    assert restored[0]["content"] == "hello transcript"
+    assert restored[0]["attachments"] == ["state/attachments/demo.png"]
+    assert restored[0]["reactions"] == ["👍"]
+
+
+@pytest.mark.asyncio
+async def test_run_without_discord_token_announces_local_web_ui(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class StopWait(Exception):
+        pass
+
+    class FakeEvent:
+        async def wait(self) -> None:
+            raise StopWait()
+
+    class FakeRunner:
+        async def cleanup(self) -> None:
+            return None
+
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    app.config.web_ui_port = 8084
+    app.config.web_ui_host = "0.0.0.0"
+    monkeypatch.delenv(app.config.discord_token_env, raising=False)
+    monkeypatch.setattr(app.scheduler, "start", lambda: None)
+    monkeypatch.setattr(app, "_reload_scheduler_jobs", lambda: None)
+
+    async def fake_event_worker() -> None:
+        await asyncio.sleep(3600)
+
+    async def fake_start_web_ui(
+        _: app_mod.OpenStrixApp,
+        host: str,
+        port: int,
+    ) -> FakeRunner:
+        assert host == "0.0.0.0"
+        assert port == 8084
+        return FakeRunner()
+
+    async def fail_stdin_mode() -> None:
+        raise AssertionError("_stdin_mode should not be called when web UI is enabled")
+
+    monkeypatch.setattr(app, "_event_worker", fake_event_worker)
+    monkeypatch.setattr(app, "_stdin_mode", fail_stdin_mode)
+    monkeypatch.setattr(web_ui_mod, "start_web_ui", fake_start_web_ui)
+    monkeypatch.setattr(app_mod.asyncio, "Event", lambda: FakeEvent())
+
+    try:
+        with pytest.raises(StopWait):
+            await app.run()
+    finally:
+        if app.worker_task is not None:
+            app.worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await app.worker_task
+
+    out = capsys.readouterr().out
+    assert "No Discord token configured. Local web UI available at http://127.0.0.1:8084/" in out
 
 
 @pytest.mark.asyncio

@@ -59,6 +59,8 @@ class TestAppConfigFolders:
     def test_default_folders(self) -> None:
         config = AppConfig()
         assert config.folders == DEFAULT_FOLDERS
+        assert config.web_ui_host == "127.0.0.1"
+        assert config.web_ui_channel_id == "local-web"
 
     def test_writable_dirs(self) -> None:
         config = AppConfig(folders={"state": "rw", "skills": "rw", "blocks": "ro"})
@@ -78,6 +80,9 @@ class TestLoadConfigFolders:
         config_data = {
             "model": "test-model",
             "folders": {"state": "rw", "data": "ro"},
+            "web_ui_port": 8081,
+            "web_ui_host": "0.0.0.0",
+            "web_ui_channel_id": "local-web",
         }
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml.safe_dump(config_data), encoding="utf-8")
@@ -85,6 +90,9 @@ class TestLoadConfigFolders:
         layout = RepoLayout(home=tmp_path, state_dir_name="state")
         config = load_config(layout)
         assert config.folders == {"state": "rw", "data": "ro"}
+        assert config.web_ui_port == 8081
+        assert config.web_ui_host == "0.0.0.0"
+        assert config.web_ui_channel_id == "local-web"
 
     def test_defaults_when_no_folders_key(self, tmp_path: Path) -> None:
         config_data = {"model": "test-model"}
@@ -148,6 +156,8 @@ class TestBootstrapCreatesFolders:
         loaded = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
         assert "folders" in loaded
         assert loaded["folders"] == DEFAULT_FOLDERS
+        assert loaded["web_ui_host"] == "127.0.0.1"
+        assert loaded["web_ui_channel_id"] == "local-web"
 
 
 class TestWriteGuardFromConfig:

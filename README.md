@@ -1,7 +1,7 @@
 # open-strix
 [![PyPI version](https://img.shields.io/pypi/v/open-strix.svg)](https://pypi.org/project/open-strix/)
 
-A persistent AI companion that lives in your Discord server, remembers everything, and gets better over time.
+A persistent AI companion that lives in Discord or a built-in local web chat, remembers everything, and gets better over time.
 
 ```bash
 uvx open-strix setup --home my-agent --github
@@ -15,9 +15,9 @@ Three commands. You have an agent.
 
 open-strix is an opinionated framework for building long-running AI agents. Not chatbots — *companions*. Agents that develop personality through conversation, maintain memory across sessions, schedule their own work, and learn from their mistakes.
 
-It runs on cheap models (MiniMax M2.5, ~$0.01/message), talks to you over Discord, and stores everything in git. No vector databases, no cloud services, no enterprise pricing. Just files, memory blocks, and a git history you can actually read.
+It runs on cheap models (MiniMax M2.5, ~$0.01/message), talks to you over Discord or a small built-in web UI, and stores everything in git. No vector databases, no cloud services, no enterprise pricing. Just files, memory blocks, and a git history you can actually read.
 
-**How you interact with it:** You talk to it on Discord. It talks back using tools (`send_message`, `react`). It has scheduled jobs that fire even when you're not around. Over time, it develops interests, tracks your projects, and starts doing useful things without being asked.
+**How you interact with it:** You talk to it on Discord or in the local web UI. It talks back using tools (`send_message`, `react`). It has scheduled jobs that fire even when you're not around. Over time, it develops interests, tracks your projects, and starts doing useful things without being asked.
 
 ## Why this exists
 
@@ -43,6 +43,7 @@ state/           # Markdown files — projects, notes, research. Read on demand.
 skills/          # Markdown skill files. Drop one in, agent picks it up.
 logs/
   events.jsonl   # Every tool call, error, and event. The agent can read this.
+  chat-history.jsonl # Append-only chat transcript across Discord, web UI, and stdin.
   journal.jsonl  # Agent's own log — what happened, what it predicted.
 scheduler.yaml   # Cron jobs the agent manages itself.
 config.yaml      # Model, Discord config, prompt tuning.
@@ -105,6 +106,12 @@ Every tool call, incoming message, error, and scheduler trigger is logged to `lo
 
 When `api_port` is set in `config.yaml`, a loopback REST API accepts events from external scripts — Bluesky pollers, CI hooks, cross-agent communication. See [docs/events.md](docs/events.md) for the full event schema, query cookbook, and REST API reference.
 
+### Local Web UI
+
+If you want a simple 1:1 chat without Discord, set `web_ui_port` in `config.yaml` and open the browser UI. It supports text, pictures, and file attachments, and routes through a reserved channel ID (`local-web` by default) so the normal `send_message` tool works without special prompting.
+
+By default it binds to `127.0.0.1`. If you want to reach it from another device on your network, set `web_ui_host: 0.0.0.0`.
+
 ## Growing an agent
 
 The code is the easy part. The real work is the conversations.
@@ -117,7 +124,7 @@ See [GROWING.md](GROWING.md) for the full guide on what this process looks like 
 
 ## Setup
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) and a Discord bot token.
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). A Discord bot token is optional if you use only the built-in web UI.
 
 ```bash
 uvx open-strix setup --home my-agent --github
@@ -140,6 +147,10 @@ journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
 always_respond_bot_ids: []
+api_port: 0
+web_ui_port: 0
+web_ui_host: 127.0.0.1
+web_ui_channel_id: local-web
 ```
 
 Models use the Anthropic-compatible API format. MiniMax M2.5 and Kimi K2.5 both work out of the box. Any model with an Anthropic-compatible endpoint will work — set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` in `.env`.

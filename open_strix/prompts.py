@@ -35,7 +35,7 @@ Communication:
 - Pay attention to your user's communication preferences. It's totally fine to send a message, do some work, and then send another message, if that's what the moment warrants.
 - If something feels perplexing, search for the context! The list_messages tool is a good place to start, or search your state files.
 - In 1-1 DMs, you should *ALWAYS* acknowledge a message, either by reacting or replying via `send_message`.
-- Pay attention to which conversation is happening in which room, and use channel IDs correctly.
+- Pay attention to which conversation is happening in which room or local web chat, and use channel IDs correctly.
 - Use the `lookup` tool to find user IDs and channel IDs by name. To mention someone: `<@USER_ID>`. The phone book at `state/phone-book.md` lists all known users and channels. For manual notes about channels, people, and external comms, see `state/phone-book.extra.md`.
 
 Memory:
@@ -185,7 +185,7 @@ def render_memory_blocks(blocks: list[dict[str, Any]]) -> str:
     return "\n\n".join(rendered)
 
 
-def render_discord_messages(messages: list[dict[str, Any]]) -> str:
+def render_chat_messages(messages: list[dict[str, Any]]) -> str:
     if not messages:
         return "(none)"
 
@@ -264,12 +264,12 @@ def render_turn_prompt(
     *,
     journal_entries: list[dict[str, Any]],
     memory_blocks: list[dict[str, Any]],
-    discord_messages: list[dict[str, Any]],
+    recent_messages: list[dict[str, Any]],
     current_event: Mapping[str, Any],
 ) -> str:
     journals = render_journal_entries(journal_entries)
     blocks_text = render_memory_blocks(memory_blocks)
-    messages_text = render_discord_messages(discord_messages)
+    messages_text = render_chat_messages(recent_messages)
     channel_context_text = render_channel_context(current_event)
     current_event_text = render_current_event(current_event)
 

@@ -323,7 +323,7 @@ class ToolsMixin:
             channel_id: str | None = None,
             attachment_paths: list[str] | None = None,
         ) -> str:
-            """Send a Discord message to a channel with optional file attachments."""
+            """Send a message to the current conversation or a specific channel with optional file attachments."""
             resolved_attachment_paths, attachment_names = self._resolve_send_message_attachments(
                 attachment_paths,
             )
@@ -395,7 +395,7 @@ class ToolsMixin:
                     "change strategy, and finish the turn safely."
                 )
 
-            sent, sent_message_id, sent_chunks = await self._send_discord_message(
+            sent, sent_message_id, sent_chunks = await self._send_channel_message(
                 channel_id=target_channel_id,
                 text=text,
                 attachment_paths=resolved_attachment_paths,
@@ -873,11 +873,9 @@ class ToolsMixin:
             message_id: str | None = None,
             channel_id: str | None = None,
         ) -> str:
-            """React to a Discord message. Defaults to the latest known message."""
+            """React to a message in the current conversation. Defaults to the latest known message."""
             if not emoji.strip():
                 return "emoji is required."
-            if self.discord_client is None or not self.discord_client.is_ready():
-                return "Discord is not connected."
 
             target_channel_id = channel_id or self.current_channel_id
             target_message_id = message_id
@@ -890,6 +888,26 @@ class ToolsMixin:
                 return "No message found to react to."
             if target_channel_id is None:
                 return "No channel_id provided and no channel could be inferred."
+
+            if self.is_local_web_channel(target_channel_id):
+                reacted = await self._react_to_message(
+                    channel_id=target_channel_id,
+                    message_id=str(target_message_id),
+                    emoji=emoji,
+                )
+                if not reacted:
+                    return f"Message {target_message_id} was not found in channel {target_channel_id}."
+                self.log_event(
+                    "tool_call",
+                    tool="react",
+                    emoji=emoji,
+                    channel_id=target_channel_id,
+                    message_id=str(target_message_id),
+                )
+                return f"Reacted to message {target_message_id} in channel {target_channel_id}."
+
+            if self.discord_client is None or not self.discord_client.is_ready():
+                return "Discord is not connected."
 
             try:
                 channel_int = int(target_channel_id)

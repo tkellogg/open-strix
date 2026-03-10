@@ -40,6 +40,7 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
         home / "blocks" / ".gitkeep",
         home / "logs" / "events.jsonl",
         home / "logs" / "journal.jsonl",
+        home / "logs" / "chat-history.jsonl",
         home / "scheduler.yaml",
         home / "config.yaml",
         home / "checkpoint.md",
@@ -63,6 +64,7 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
         for line in (home / ".gitignore").read_text(encoding="utf-8").splitlines()
     }
     assert "logs/" in gitignore_lines
+    assert "logs/chat-history.jsonl" in gitignore_lines
     assert ".env" in gitignore_lines
     assert "*.png" in gitignore_lines
     assert "*.jpg" in gitignore_lines
