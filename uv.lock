@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -1542,7 +1542,7 @@ wheels = [
 
 [[package]]
 name = "open-strix"
-version = "0.1.31"
+version = "0.1.32"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
