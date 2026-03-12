@@ -11,7 +11,9 @@ on to memories by setting memory blocks or writing files.
 ## Memory Blocks
 Blocks are highly visible. It's CRITICAL that they're succinct and information-rich.
 Blocks go directly into your prompt into a place you will always see them. At the
-same time, if they're too verbose
+same time, if they're too verbose they waste prompt space and dilute the signal of
+everything else in your context window. Aim for high information density: facts, IDs,
+and references — not prose.
 
 ## State Files
 You have to search for files, so information in files can get lost. One way to have
