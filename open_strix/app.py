@@ -543,7 +543,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
     def _load_memory_blocks(self) -> list[dict[str, Any]]:
         rows: list[tuple[int, str, dict[str, Any]]] = []
         for path in self._iter_block_files():
-            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            try:
+                loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue  # block deleted between glob and read (TOCTOU race)
             if not isinstance(loaded, dict):
                 continue
 
