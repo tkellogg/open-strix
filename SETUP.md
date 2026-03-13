@@ -284,6 +284,7 @@ folders:
 | `web_ui_host` | Bind host for the web UI (default `127.0.0.1`) |
 | `web_ui_channel_id` | Synthetic channel ID used by the built-in web chat |
 | `folders` | Map of folder names to access mode (`rw` or `ro`) |
+| `reflection` | Async self-review config (see below) |
 | `mcp_servers` | List of MCP server configs (see below) |
 
 ### Folders
@@ -321,6 +322,25 @@ folders:
 If the agent lives at `~/jester/`, this resolves to `~/cybernetics-research/`. The agent can read files in that directory but can't modify them.
 
 This is useful for giving an agent access to shared resources — research repos, documentation, datasets — without copying them into the agent's home directory. The directory is created on startup if it doesn't exist.
+
+### Reflection
+
+Async self-review after each `send_message`. When enabled, the agent's own model evaluates outgoing messages against criteria defined in a markdown file. If dissonance is detected, a 🪞 reaction is added to the sent message.
+
+```yaml
+reflection:
+  enabled: false
+  questions_file: state/is-dissonant-prompt.md
+```
+
+| Key | Purpose |
+|---|---|
+| `enabled` | `true` to activate reflection, `false` to disable (default: `false`) |
+| `questions_file` | Path to the dissonance criteria file, relative to agent home |
+
+The questions file is a markdown document defining what patterns to look for. A default is created on first boot at the configured path. The agent can edit this file to refine its own self-monitoring criteria over time.
+
+See the **dissonance** builtin skill for details on how it works and how to tune it.
 
 ### MCP Servers
 
