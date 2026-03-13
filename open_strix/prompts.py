@@ -198,6 +198,7 @@ def render_chat_messages(messages: list[dict[str, Any]]) -> str:
         content = str(message.get("content", "")).strip() or "(no text)"
 
         lines = [f"{timestamp} | {author} | message_id={message_id}", content]
+        # Attachments as file paths only — see _save_attachments() for design rationale.
         attachments = message.get("attachments")
         if isinstance(attachments, list) and attachments:
             lines.append("attachments:")
@@ -221,6 +222,8 @@ def render_current_event(event: Mapping[str, Any]) -> str:
         f"{timestamp} | {author} | message_id={message_id}",
         content,
     ]
+    # Attachments are listed as file paths, not inline content. The agent can
+    # use skills/tools to inspect them. See _save_attachments() for rationale.
     attachment_names = event.get("attachment_names")
     if isinstance(attachment_names, list) and attachment_names:
         lines.append("attachments:")
