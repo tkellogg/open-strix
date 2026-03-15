@@ -103,6 +103,42 @@ if not cursor:
     cursor["last_indexed_at"] = cutoff
 ```
 
+### Use External Service State When Available
+
+Some services already track what's been processed. When the external service provides per-application state tracking, use it instead of (or alongside) a local cursor — it's one fewer thing to manage and it stays consistent if your cursor file gets deleted.
+
+**Examples of useful external state:**
+
+- **Bluesky `updateSeen`** — marks notifications as seen. `listNotifications` returns a `seenAt` timestamp. Your poller can call `updateSeen` after processing, then on the next run, compare `notification.indexed_at > seenAt` to skip old ones.
+- **GitHub "If-Modified-Since"** — returns 304 Not Modified when nothing changed. Saves you from parsing an unchanged response.
+- **RSS `ETag` / `Last-Modified`** — same pattern as GitHub. The server tells you whether to bother.
+
+```python
+# Bluesky: use the service's seenAt as a secondary cursor
+response = client.app.bsky.notification.list_notifications()
+seen_at = response.seen_at  # server tracks this
+
+for notif in response.notifications:
+    if seen_at and notif.indexed_at <= seen_at:
+        continue
+    # process...
+
+# Tell the service we've processed everything
+client.app.bsky.notification.update_seen({"seenAt": now_iso()})
+```
+
+**When to use external state:**
+- The service provides per-app or per-token tracking (not shared across all clients)
+- You want resilience against local state loss (cursor file deleted, skill reinstalled)
+- The service's state semantics match what you need (seen = processed)
+
+**When to keep your own cursor:**
+- The service's state is shared across clients you don't control (browser, mobile app)
+- You need finer-grained tracking than the service offers
+- The service doesn't provide state tracking at all
+
+You can also use both — local cursor as primary, external state as a fallback. If the cursor file is missing on startup, check the service for a "last seen" marker instead of defaulting to "process nothing."
+
 ## Filtering
 
 Pollers should be selective. The agent gets one event per stdout line, so noise = wasted LLM calls.
@@ -123,9 +159,9 @@ for notif in notifications:
     emit(format_notification(notif))  # Agent can't do anything with "New like from @user!"
 ```
 
-### Don't Filter on Read/Seen Status
+### Don't Filter on Shared Read/Seen Status
 
-Many APIs have an `is_read` or `seen` flag. Don't use it — it changes when anyone (or any client) views the resource, which may not be your agent.
+Many APIs have an `is_read` or `seen` flag. If it's shared across all clients (browser, mobile, your poller), don't use it — it changes when anyone views the resource.
 
 ```python
 # Bad — breaks if you view profile in a browser
@@ -136,6 +172,8 @@ if notif.is_read:
 if last_seen and notif.indexed_at <= last_seen:
     continue
 ```
+
+**Exception:** If the service provides per-application state (e.g., Bluesky's `updateSeen` via your bot's auth token), that *is* safe to use. See "Use External Service State When Available" above.
 
 ## Notification Noise — Pain Adds Up
 
@@ -279,7 +317,7 @@ Keep all poller state in `STATE_DIR`. Don't write to random locations — it mak
 | Anti-Pattern | Problem | Fix |
 |---|---|---|
 | URI-based cursors | URIs can be deleted or reordered | Use timestamps |
-| Filtering on `is_read` | Changes when any client views the resource | Use your own cursor |
+| Filtering on shared `is_read` | Changes when any client views the resource | Use your own cursor, or per-app service state (see "Use External Service State") |
 | Emitting likes/follows | Agent can't act on these, trains operator to ignore output | Filter to actionable types |
 | Truncating event text | LLM confidently misinterprets partial context | Include full text, filter at the source instead |
 | Missing URI/CID in prompts | Agent can't reply or take action | Include identifiers |

@@ -123,11 +123,19 @@ skills/my-monitor/
 ## Design Patterns
 
 See [design-patterns.md](design-patterns.md) for detailed guidance on:
-- **State management** — cursor pattern, timestamp vs URI cursors, recovery on first run
-- **Filtering** — selecting actionable notification types, avoiding `is_read` traps
+- **State management** — cursor pattern, timestamp vs URI cursors, external service state, recovery on first run
+- **Filtering** — selecting actionable notification types, avoiding shared `is_read` traps
 - **Prompt quality** — including URIs/CIDs so the agent can act, not just observe
 - **Error handling** — fail silently (exit non-zero), never emit on error
 - **Anti-patterns** — common mistakes and how to avoid them
+
+## Security & Privacy
+
+See [security.md](security.md) for guidance on:
+- **Trust tiers** — the follow-gate pattern for sorting trusted vs unknown sources
+- **Operator in the loop** — keeping the human informed without locking everything down
+- **Credential handling** — env vars, per-agent accounts, what not to log
+- **Prompt injection** — honest reporting with context, not sanitization
 
 ## Key Constraints
 
