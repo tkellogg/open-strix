@@ -226,6 +226,10 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{agent_name} Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
     <style>
       :root {{
         --paper: #f5efe3;
@@ -252,7 +256,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           radial-gradient(circle at top left, rgba(13, 118, 110, 0.08), transparent 32rem),
           linear-gradient(180deg, #efe4cf 0%, #f7f2e7 36%, #f5efe3 100%);
         color: var(--ink);
-        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }}
 
       body {{
@@ -353,6 +357,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       .body {{
         line-height: 1.45;
+        overflow-wrap: anywhere;
       }}
 
       .body code {{ background: rgba(30,36,48,0.07); padding: 0.15em 0.4em; border-radius: 0.3em; font-family: ui-monospace, 'SF Mono', Monaco, monospace; font-size: 0.9em; }}
@@ -362,6 +367,62 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       .body p {{ margin: 0.4em 0; }}
       .body p:first-child {{ margin-top: 0; }}
       .body p:last-child {{ margin-bottom: 0; }}
+      .body > :first-child {{ margin-top: 0; }}
+      .body > :last-child {{ margin-bottom: 0; }}
+      .body h1,
+      .body h2,
+      .body h3 {{
+        line-height: 1.25;
+        margin: 0.9rem 0 0.55rem;
+      }}
+      .body h1 {{ font-size: 1.3em; padding-bottom: 0.25rem; border-bottom: 1px solid var(--line); }}
+      .body h2 {{ font-size: 1.15em; padding-bottom: 0.22rem; border-bottom: 1px solid var(--line); }}
+      .body h3 {{ font-size: 1.05em; }}
+      .body ul,
+      .body ol {{
+        margin: 0.5rem 0;
+        padding-left: 1.4rem;
+      }}
+      .body li + li {{ margin-top: 0.25rem; }}
+      .body blockquote {{
+        margin: 0.75rem 0;
+        padding: 0.55rem 0.8rem;
+        border-left: 0.24rem solid var(--accent);
+        background: rgba(255, 255, 255, 0.48);
+        color: var(--muted);
+        border-radius: 0 0.7rem 0.7rem 0;
+      }}
+      .body hr {{
+        margin: 0.9rem 0;
+        border: 0;
+        border-top: 1px solid var(--line);
+      }}
+      .body table {{
+        width: 100%;
+        max-width: 100%;
+        display: block;
+        overflow-x: auto;
+        border-collapse: collapse;
+        margin: 0.75rem 0;
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        background: rgba(255, 255, 255, 0.5);
+      }}
+      .body th,
+      .body td {{
+        min-width: 7rem;
+        padding: 0.55rem 0.7rem;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }}
+      .body th {{
+        background: rgba(13, 118, 110, 0.12);
+        font-weight: 600;
+      }}
+      .body tr:nth-child(even) td {{
+        background: rgba(255, 255, 255, 0.32);
+      }}
 
       .attachments {{
         display: grid;
@@ -583,22 +644,17 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }}
 
       function simpleMarkdown(text) {{
-        if (!text) return '';
-        var s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        s = s.replace(/```(\\w*)\\n?([\\s\\S]*?)```/g, function(m, lang, code) {{ return '<pre><code>' + code + '</code></pre>'; }});
-        s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
-        s = s.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
-        s = s.replace(/\\*(.+?)\\*/g, '<em>$1</em>');
-        s = s.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-        var parts = s.split(/<pre><code>[\\s\\S]*?<\\/code><\\/pre>/g);
-        var blocks = [];
-        s.replace(/<pre><code>[\\s\\S]*?<\\/code><\\/pre>/g, function(m) {{ blocks.push(m); return m; }});
-        var result = '';
-        for (var i = 0; i < parts.length; i++) {{
-          result += parts[i].replace(/\\n/g, '<br>');
-          if (i < blocks.length) result += blocks[i];
-        }}
-        return result;
+        if (!text) return "";
+        marked.setOptions({{ breaks: true, gfm: true }});
+        text = text.replace(/<script\\b[^<]*(?:(?!<\\/script>)<[^<]*)*<\\/script>/gi, "");
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = marked.parse(text);
+        wrapper.querySelectorAll("script").forEach((node) => node.remove());
+        wrapper.querySelectorAll("a").forEach((link) => {{
+          link.target = "_blank";
+          link.rel = "noreferrer";
+        }});
+        return wrapper.innerHTML;
       }}
 
       function createMessageElement(message) {{

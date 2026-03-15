@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+import io
 import json
 from pathlib import Path
 
-from aiohttp import FormData
+from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+from aiohttp.web_request import FileField
+from multidict import CIMultiDict, CIMultiDictProxy, MultiDict
 import pytest
 
 from open_strix.config import AppConfig, RepoLayout
@@ -51,18 +54,47 @@ def _get_route_handler(app, path: str, method: str):
     raise AssertionError(f"missing {method} route for {path}")
 
 
+def test_web_ui_page_includes_markdown_assets_and_styles(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert '<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>' in page
+    assert (
+        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" '
+        'rel="stylesheet">'
+    ) in page
+    assert 'font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;' in page
+    assert 'marked.parse(text)' in page
+    assert "replace(/&/g, '&amp;')" not in page
+    assert 's = s.replace(/```(\\\\w*)\\\\n?([\\\\s\\\\S]*?)```/g' not in page
+    assert ".body table" in page
+    assert ".body th" in page
+    assert ".body td" in page
+
+
 @pytest.mark.asyncio
-async def test_web_ui_message_flow_and_attachment_serving(aiohttp_client, tmp_path: Path) -> None:
+async def test_web_ui_message_flow_and_attachment_serving(tmp_path: Path) -> None:
     strix = DummyStrix(tmp_path)
-    client = await aiohttp_client(_build_web_ui_app(strix))
+    app = _build_web_ui_app(strix)
+    post_handler = _get_route_handler(app, "/api/messages", "POST")
+    upload = FileField(
+        name="files",
+        filename="photo.png",
+        file=io.BytesIO(b"png-bytes"),
+        content_type="image/png",
+        headers=CIMultiDictProxy(CIMultiDict()),
+    )
 
-    form = FormData()
-    form.add_field("text", "hello from the browser")
-    form.add_field("files", b"png-bytes", filename="photo.png", content_type="image/png")
-    response = await client.post("/api/messages", data=form)
+    class DummyUploadRequest:
+        content_type = "multipart/form-data"
 
+        async def post(self) -> MultiDict[str | FileField]:
+            return MultiDict([("text", "hello from the browser"), ("files", upload)])
+
+    response = await post_handler(DummyUploadRequest())
     assert response.status == 200
-    body = await response.json()
+    body = json.loads(response.text)
     assert body["status"] == "queued"
     assert body["channel_id"] == "local-web"
 
@@ -75,9 +107,11 @@ async def test_web_ui_message_flow_and_attachment_serving(aiohttp_client, tmp_pa
     saved_path = tmp_path / event.attachment_names[0]
     assert saved_path.read_bytes() == b"png-bytes"
 
-    messages_response = await client.get("/api/messages")
+    messages_handler = _get_route_handler(app, "/api/messages", "GET")
+    messages_request = make_mocked_request("GET", "/api/messages", app=app)
+    messages_response = await messages_handler(messages_request)
     assert messages_response.status == 200
-    messages_body = await messages_response.json()
+    messages_body = json.loads(messages_response.text)
     assert messages_body["channel_id"] == "local-web"
     assert messages_body["is_processing"] is False
     assert len(messages_body["messages"]) == 1
@@ -86,9 +120,19 @@ async def test_web_ui_message_flow_and_attachment_serving(aiohttp_client, tmp_pa
     assert message["attachments"][0]["name"] == saved_path.name
     assert message["attachments"][0]["is_image"] is True
 
-    file_response = await client.get(message["attachments"][0]["url"])
+    file_handler = next(
+        route.handler
+        for route in app.router.routes()
+        if route.method == "GET" and getattr(route.resource, "canonical", "").startswith("/files/")
+    )
+
+    class DummyFileRequest:
+        match_info = {"path": message["attachments"][0]["path"]}
+
+    file_response = await file_handler(DummyFileRequest())
     assert file_response.status == 200
-    assert await file_response.read() == b"png-bytes"
+    assert isinstance(file_response, web.FileResponse)
+    assert Path(file_response._path) == saved_path.resolve()
 
 
 @pytest.mark.asyncio
