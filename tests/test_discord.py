@@ -87,6 +87,50 @@ def test_bot_allowlist_config_controls_message_processing(
     assert app.should_process_discord_message(author_is_bot=True, author_id="42") is True
 
 
+def test_channel_allowlist_filters_messages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "discord_channel_allowlist:\n"
+        "  - '111'\n"
+        "  - '222'\n",
+        encoding="utf-8",
+    )
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    # Allowed channel — should process
+    assert app.should_process_discord_message(
+        author_is_bot=False, author_id=None, channel_id="111"
+    ) is True
+    # Not in allowlist — should filter
+    assert app.should_process_discord_message(
+        author_is_bot=False, author_id=None, channel_id="999"
+    ) is False
+    # No channel_id — still processes (DMs, web UI, etc.)
+    assert app.should_process_discord_message(
+        author_is_bot=False, author_id=None, channel_id=None
+    ) is True
+
+
+def test_empty_channel_allowlist_processes_all(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "discord_channel_allowlist: []\n",
+        encoding="utf-8",
+    )
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    # Empty allowlist — all channels should process
+    assert app.should_process_discord_message(
+        author_is_bot=False, author_id=None, channel_id="999"
+    ) is True
+
+
 def test_log_event_includes_stable_session_id_for_app_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

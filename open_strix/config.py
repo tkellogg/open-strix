@@ -29,6 +29,7 @@ journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
 always_respond_bot_ids: []
+discord_channel_allowlist: []
 api_port: 0
 web_ui_port: 0
 web_ui_host: 127.0.0.1
@@ -182,6 +183,7 @@ class AppConfig:
     discord_messages_in_prompt: int = 10
     discord_token_env: str = "DISCORD_TOKEN"
     always_respond_bot_ids: set[str] = field(default_factory=set)
+    discord_channel_allowlist: set[str] = field(default_factory=set)
     session_log_retention_days: int = 30
     api_port: int = 0
     web_ui_port: int = 0
@@ -249,6 +251,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         discord_messages_in_prompt=int(loaded.get("discord_messages_in_prompt", 10)),
         discord_token_env=str(loaded.get("discord_token_env", "DISCORD_TOKEN")),
         always_respond_bot_ids=_normalize_id_list(loaded.get("always_respond_bot_ids")),
+        discord_channel_allowlist=_normalize_id_list(loaded.get("discord_channel_allowlist")),
         session_log_retention_days=int(loaded.get("session_log_retention_days", 30)),
         api_port=int(loaded.get("api_port", 0)),
         web_ui_port=int(loaded.get("web_ui_port", 0)),

@@ -530,7 +530,12 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         *,
         author_is_bot: bool,
         author_id: str | int | None,
+        channel_id: str | None = None,
     ) -> bool:
+        # Channel allowlist: if configured, only process messages from listed channels.
+        if self.config.discord_channel_allowlist and channel_id is not None:
+            if str(channel_id) not in self.config.discord_channel_allowlist:
+                return False
         if not author_is_bot:
             return True
         return self.should_respond_to_bot(author_id)
