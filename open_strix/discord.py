@@ -177,9 +177,11 @@ class DiscordBridge(discord.Client):
 
     async def on_message(self, message: discord.Message) -> None:
         author_id = getattr(message.author, "id", None)
+        channel_id = str(getattr(message.channel, "id", ""))
         if not self._app.should_process_discord_message(
             author_is_bot=bool(getattr(message.author, "bot", False)),
             author_id=author_id,
+            channel_id=channel_id or None,
         ):
             return
         await self._app.handle_discord_message(message)
