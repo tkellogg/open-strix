@@ -225,6 +225,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2016%2016%27%3E%3Cpath%20d%3D%27M2%201h3v5l4-5h4L8%207l5%208H9L6%2010l-1%201v4H2z%27%20fill%3D%27%230d766e%27%2F%3E%3C%2Fsvg%3E" />
     <title>{agent_name} Chat</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
