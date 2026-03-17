@@ -414,6 +414,12 @@ class ToolsMixin:
                 message_id=sent_message_id,
                 text=text,
             )
+            if sent and self.reflection_hook is not None and sent_message_id:
+                await self.reflection_hook.on_message_sent(
+                    text=text,
+                    channel_id=target_channel_id,
+                    message_id=sent_message_id,
+                )
             return "send_message complete (sent={sent}, chunks={chunks}, attachments={attachments}, git_sync=deferred)".format(
                 sent=sent,
                 chunks=sent_chunks,

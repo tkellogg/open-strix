@@ -41,6 +41,13 @@ folders:
   blocks: ro
   scripts: ro
   logs: ro
+# Reflection: async self-review after each send_message.
+# When enabled, the agent's own model evaluates outgoing messages against
+# criteria in the questions file. Dissonance triggers a 🪞 reaction.
+# See the dissonance skill for details.
+reflection:
+  enabled: false
+  questions_file: state/is-dissonant-prompt.md
 """
 
 DEFAULT_SCHEDULER = """\
@@ -177,6 +184,12 @@ class RepoLayout:
 
 
 @dataclass
+class ReflectionConfig:
+    enabled: bool = False
+    questions_file: str = "state/is-dissonant-prompt.md"
+
+
+@dataclass
 class AppConfig:
     model: str = DEFAULT_MODEL
     model_max_retries: int = DEFAULT_MODEL_MAX_RETRIES
@@ -192,6 +205,7 @@ class AppConfig:
     web_ui_channel_id: str = DEFAULT_WEB_UI_CHANNEL_ID
     folders: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_FOLDERS))
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
+    reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
     disable_builtin_skills: set[str] = field(default_factory=set)
 
     @property
@@ -239,6 +253,15 @@ def _parse_folders(raw: Any) -> dict[str, str]:
     return folders if folders else dict(DEFAULT_FOLDERS)
 
 
+def _parse_reflection(raw: Any) -> ReflectionConfig:
+    if not isinstance(raw, dict):
+        return ReflectionConfig()
+    return ReflectionConfig(
+        enabled=bool(raw.get("enabled", False)),
+        questions_file=str(raw.get("questions_file", "state/is-dissonant-prompt.md")).strip(),
+    )
+
+
 def load_config(layout: RepoLayout) -> AppConfig:
     loaded = yaml.safe_load(layout.config_file.read_text(encoding="utf-8")) or {}
     model_raw = loaded.get("model", DEFAULT_MODEL)
@@ -261,6 +284,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         or DEFAULT_WEB_UI_CHANNEL_ID,
         folders=_parse_folders(loaded.get("folders")),
         mcp_servers=parse_mcp_server_configs(loaded.get("mcp_servers")),
+        reflection=_parse_reflection(loaded.get("reflection")),
         disable_builtin_skills=_normalize_id_list(loaded.get("disable_builtin_skills")),
     )
 
@@ -349,6 +373,17 @@ def bootstrap_home_repo(
     _cleanup_legacy_builtin_scripts(layout)
     _install_git_hook(layout.home)
     _ensure_logs_ignored(layout.home)
+
+    # Write default dissonance questions file if reflection is configured.
+    reflection = _parse_reflection(loaded.get("reflection"))
+    questions_path = layout.home / reflection.questions_file
+    if not questions_path.exists():
+        questions_path.parent.mkdir(parents=True, exist_ok=True)
+        from .builtin_skills import BUILTIN_SKILLS
+
+        default_content = BUILTIN_SKILLS.get("dissonance/default-questions.md", "")
+        if default_content:
+            _write_if_missing(questions_path, default_content)
 
 
 def _cleanup_legacy_builtin_scripts(layout: RepoLayout) -> None:
