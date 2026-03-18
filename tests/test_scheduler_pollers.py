@@ -336,3 +336,52 @@ class TestOnPollerFire:
         assert len(app.enqueued) == 1
         assert app.enqueued[0].prompt == "valid line"
         assert any(e["type"] == "poller_invalid_line" for e in app.events)
+
+    @pytest.mark.asyncio
+    async def test_poller_source_platform_passthrough(self, tmp_home: Path) -> None:
+        """source_platform from poller JSONL flows through to AgentEvent."""
+        skill_dir = tmp_home / "skills" / "platform"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "bsky", "source_platform": "bluesky", "prompt": "new reply"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="platform-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].source_platform == "bluesky"
+        assert app.enqueued[0].prompt == "new reply"
+
+    @pytest.mark.asyncio
+    async def test_poller_no_source_platform_defaults_none(self, tmp_home: Path) -> None:
+        """Missing source_platform in JSONL results in None on AgentEvent."""
+        skill_dir = tmp_home / "skills" / "noplatform"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "test", "prompt": "event without platform"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="noplatform-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].source_platform is None

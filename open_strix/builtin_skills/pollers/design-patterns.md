@@ -17,12 +17,13 @@ Each line of stdout must be a self-contained JSON object. The scheduler reads st
 | Field | Type | Description |
 |-------|------|-------------|
 | `poller` | string | Poller name. The scheduler ignores this (it uses the registered name from pollers.json), but it's useful in local event logs for filtering with jq. |
+| `source_platform` | string | The platform this notification originated from (e.g., `"bluesky"`, `"github"`). Passed through to the agent as `source_platform` on the event. Lets the agent know where to reply — without it, the agent may respond on the wrong platform (e.g., replying on Discord to a Bluesky mention). |
 
 ### Example Output
 
 ```
-{"poller": "bluesky-mentions", "prompt": "@user.bsky.social replied to your post: \"interesting take\"\nReply URI: at://did:plc:abc/app.bsky.feed.post/123 | CID: bafyabc"}
-{"poller": "bluesky-mentions", "prompt": "@other.bsky.social mentioned you: \"cc @you.bsky.social\"\nPost URI: at://did:plc:def/app.bsky.feed.post/456 | CID: bafydef"}
+{"poller": "bluesky-mentions", "source_platform": "bluesky", "prompt": "@user.bsky.social replied to your post: \"interesting take\"\nReply URI: at://did:plc:abc/app.bsky.feed.post/123 | CID: bafyabc"}
+{"poller": "bluesky-mentions", "source_platform": "bluesky", "prompt": "@other.bsky.social mentioned you: \"cc @you.bsky.social\"\nPost URI: at://did:plc:def/app.bsky.feed.post/456 | CID: bafydef"}
 ```
 
 ### What the Scheduler Does With It
@@ -326,6 +327,7 @@ Keep all poller state in `STATE_DIR`. Don't write to random locations — it mak
 | Hardcoded paths | Breaks when moved or run by scheduler | Use STATE_DIR env var |
 | Writing state outside STATE_DIR | Hard to debug, breaks portability | Keep everything in STATE_DIR |
 | Emitting `"No new items"` to stdout | Wastes an LLM call on a non-event | Output nothing when there's nothing to report |
-| Extra fields beyond `prompt` | Scheduler ignores them — false sense of structure | Only `prompt` matters; use local event log for extras |
+| Extra fields beyond `prompt` | Scheduler ignores them — false sense of structure | Only `prompt` and `source_platform` matter; use local event log for extras |
+| Missing `source_platform` | Agent doesn't know where notification came from, may reply on wrong platform | Always include `source_platform` so the agent can route responses correctly |
 | Python poller at ≤1min interval | VM startup overhead on every invocation — under resource pressure, thick process makes the poller unreliable | Write it in Rust — no runtime, reliable under load |
 | Forgetting `reload_pollers` | Poller exists but scheduler doesn't know about it | Always call after creating/updating pollers.json |

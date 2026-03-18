@@ -13,7 +13,7 @@ Environment variables:
     BLUESKY_APP_PASSWORD - App password for authentication
 
 Output contract:
-    stdout: JSONL — {"poller": str, "prompt": str} per actionable notification
+    stdout: JSONL — {"poller": str, "source_platform": "bluesky", "prompt": str} per actionable notification
     stderr: Diagnostic logging
     exit 0: success, non-zero: error
 """
@@ -122,7 +122,7 @@ def format_notification(notif, is_trusted: bool) -> str:
 
 def emit(prompt: str) -> None:
     """Emit one event to stdout per the pollers.json contract."""
-    event = {"poller": POLLER_NAME, "prompt": prompt}
+    event = {"poller": POLLER_NAME, "source_platform": "bluesky", "prompt": prompt}
     print(json.dumps(event), flush=True)
 
 

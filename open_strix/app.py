@@ -762,6 +762,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 "attachment_names": event.attachment_names,
                 "scheduler_name": event.scheduler_name,
                 "source_id": event.source_id,
+                "source_platform": event.source_platform,
             },
         )
 

@@ -17,3 +17,4 @@ class AgentEvent:
     scheduler_name: str | None = None
     dedupe_key: str | None = None
     source_id: str | None = None
+    source_platform: str | None = None

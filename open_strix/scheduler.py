@@ -315,12 +315,17 @@ class SchedulerMixin:
             if not prompt:
                 continue
 
+            source_platform = parsed.get("source_platform")
+            if source_platform is not None:
+                source_platform = str(source_platform).strip() or None
+
             await self.enqueue_event(
                 AgentEvent(
                     event_type="poller",
                     prompt=prompt,
                     scheduler_name=poller.name,
                     dedupe_key=f"poller:{poller.name}:{event_count}",
+                    source_platform=source_platform,
                 ),
             )
             event_count += 1

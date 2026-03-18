@@ -143,6 +143,10 @@ For specific debugging workflows, read these files:
   Covers: messages not sending, circuit breaker triggers, silent failures,
   duplicate messages, channel confusion, engagement pattern analysis
 
+- **Behavioral drift after model changes or block edits?** → Read `/.open_strix_builtin_skills/introspection/debugging-drift.md`
+  Covers: response rate tracking, cross-platform routing audit, model change
+  before/after comparison, silence rate trends, topic engagement shifts
+
 - **Identity or operational drift?** → Read `/.open_strix_builtin_skills/onboarding/SKILL.md`
   Recovery from drift is structurally the same as onboarding. If introspection reveals
   stale blocks, broken schedules, or behavior that doesn't match your persona, the

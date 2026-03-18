@@ -93,7 +93,7 @@ def get_authenticated_user(token: str) -> str:
 
 def emit(prompt: str) -> None:
     """Emit one event to stdout per the pollers.json contract."""
-    event = {"poller": POLLER_NAME, "prompt": prompt}
+    event = {"poller": POLLER_NAME, "source_platform": "github", "prompt": prompt}
     print(json.dumps(event), flush=True)
 
 
