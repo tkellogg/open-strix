@@ -166,9 +166,9 @@ def create_climber_agent(
     from deepagents import create_deep_agent
     from langchain.chat_models import init_chat_model
 
-    # Import WriteGuardBackend from open_strix — same pattern used by
-    # the main agent for writable_dirs enforcement
-    from open_strix.app import WriteGuardBackend
+    # Import from readonly_backend — lightweight module that doesn't
+    # pull in discord/apscheduler/etc. Same class used by the main agent.
+    from open_strix.readonly_backend import WriteGuardBackend
 
     model = init_chat_model(model_name)
 
