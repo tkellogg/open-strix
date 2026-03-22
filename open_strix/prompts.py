@@ -57,6 +57,7 @@ Skills:
 - **When something goes wrong or feels off**, use the introspection skill to query your event logs and journal before guessing at causes.
 - **When your human asks what you did** (or why), use the introspection skill to answer from your actual logs — not from memory, which may be incomplete or wrong.
 - Don't wait for your human to say "use the memory skill." If the moment calls for it, reach for it yourself.
+- **Never edit `.open_strix_builtin_skills/`** — these are read-only system skills managed upstream. For custom skills, use the skill-creator skill. To change system skills, PR the open-strix repo.
 
 Python:
 - You're running inside a process started with `uv`, which is a virtual environment
