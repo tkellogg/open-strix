@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -13,6 +15,10 @@ from .builtin_skills import materialize_builtin_skills
 BUILTIN_SKILLS_ROUTE = "/.open_strix_builtin_skills/"
 UTC = timezone.utc
 
+# Thread-local flag: set when we're inside a dedicated tool call that already logs.
+# When set, LoggingWriteGuardBackend skips its own logging to avoid duplicates.
+_IN_TOOL_CALL = threading.local()
+
 def _utc_now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
 
@@ -20,6 +26,30 @@ def _utc_now_iso() -> str:
 def _append_jsonl(path: str, record: dict) -> None:
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
+
+
+@contextmanager
+def _inside_tool_call():
+    """Context manager: marks the current thread as being inside a dedicated tool call.
+
+    Dedicated tools wrap their backend calls with this so that
+    LoggingWriteGuardBackend knows not to emit a duplicate event.
+
+    Usage:
+        with _inside_tool_call():
+            result = backend.read(file_path)
+    """
+    prev = getattr(_IN_TOOL_CALL, "active", False)
+    _IN_TOOL_CALL.active = True
+    try:
+        yield
+    finally:
+        _IN_TOOL_CALL.active = prev
+
+
+def in_tool_call() -> bool:
+    """True if we're currently inside a dedicated tool that handles its own logging."""
+    return getattr(_IN_TOOL_CALL, "active", False)
 
 
 class LoggingWriteGuardBackend:
@@ -45,7 +75,9 @@ class LoggingWriteGuardBackend:
         return getattr(self._inner, name)
 
     def _log_read_tool(self, tool_name: str, **params: Any) -> None:
-        if not self._events_log_path:
+        # Skip if we're inside a dedicated tool call that handles its own logging.
+        # This prevents double-logging when a dedicated tool calls a backend method.
+        if not self._events_log_path or in_tool_call():
             return
         record = {
             "timestamp": _utc_now_iso(),
