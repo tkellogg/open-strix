@@ -365,7 +365,7 @@ Runtime behavior:
 
 ### Windows + Git Bash: `uvx` permission errors
 
-On Windows with Git Bash (MINGW64), `uvx open-strix setup` scaffolds the home directory correctly but then fails with `Permission denied` when trying to run the installed binary at `~/.local/bin/open-strix`. This happens because Git Bash can't execute Windows `.exe` shims installed by uv.
+On Windows with Git Bash (MINGW64), `uvx open-strix setup` scaffolds the home directory correctly but then fails with `Permission denied` when trying to run the installed binary at `~/.local/bin/open-strix`. This happens because Git Bash can't execute Windows `.exe` shims installed by uv. This is most likely to occur on locked-down corporate machines with strict shell execution policies.
 
 **Workaround:** Run from inside the home directory using `uv run` instead of `uvx`:
 
