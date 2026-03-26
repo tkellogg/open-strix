@@ -361,6 +361,24 @@ Runtime behavior:
 - Git sync (`git add -A` → commit → push) runs automatically after each processed turn.
 - New agent homes include a twice-daily prediction-review job (09:00 and 21:00 UTC).
 
+## Troubleshooting
+
+### Windows + Git Bash: `uvx` permission errors
+
+On Windows with Git Bash (MINGW64), `uvx open-strix setup` scaffolds the home directory correctly but then fails with `Permission denied` when trying to run the installed binary at `~/.local/bin/open-strix`. This happens because Git Bash can't execute Windows `.exe` shims installed by uv.
+
+**Workaround:** Run from inside the home directory using `uv run` instead of `uvx`:
+
+```bash
+uvx open-strix setup --home my-agent
+cd my-agent
+uv run open-strix
+```
+
+`uv run` uses the local `.venv` Python interpreter directly rather than going through the `.local/bin` shim, so it avoids the permission issue entirely.
+
+**Note:** If you've already tried `pip install open-strix` (global) or `uv tool install open-strix` to work around this, those are redundant — the home directory's `.venv` already has the package. You can clean them up with `pip uninstall open-strix` and `uv tool uninstall open-strix`.
+
 ## Tests
 
 ```bash
