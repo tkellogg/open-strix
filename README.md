@@ -162,6 +162,8 @@ uv run open-strix
 
 The setup command handles everything: directory structure, git init, GitHub repo creation (with `--github`), service files for your OS, and a walkthrough for model/Discord configuration.
 
+> **Windows + Git Bash users:** If `uvx` fails with permission errors, use `uv run open-strix` from inside the home directory instead. See [SETUP.md § Troubleshooting](SETUP.md#troubleshooting) for details.
+
 **Quickest path to a working agent:** Set your model API key in `.env`, set `web_ui_port: 8084` in `config.yaml`, run it, and open the browser. No Discord setup needed. Add Discord later if you want scheduled jobs to reach you when you're not at the keyboard.
 
 See [SETUP.md](SETUP.md) for detailed instructions on environment variables, model configuration, Discord setup, and deployment options.
