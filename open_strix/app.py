@@ -680,6 +680,53 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         )
         return git_result
 
+    async def _run_post_turn_watchers(self, event: AgentEvent) -> None:
+        """Fire turn_complete watchers after the agent turn finishes."""
+        try:
+            findings = await self.fire_watchers(
+                "turn_complete",
+                session_id=self.session_id,
+                events_path=str(self.layout.events_log),
+            )
+        except Exception as exc:
+            self.log_event(
+                "warning",
+                where="post_turn_watchers",
+                warning_type="watcher_fire_failed",
+                error=str(exc),
+            )
+            return
+
+        if not findings:
+            return
+
+        # Route findings based on the ``route`` field each watcher emits.
+        for finding in findings:
+            route = str(finding.get("route", "log")).strip()
+            severity = str(finding.get("severity", "info")).strip()
+            message = str(finding.get("message", "")).strip()
+            watcher_name = str(finding.get("watcher", "unknown")).strip()
+
+            # Always log every finding.
+            self.log_event(
+                "watcher_signal",
+                watcher=watcher_name,
+                route=route,
+                severity=severity,
+                message=message[:2000],
+            )
+
+            if route == "agent" and message:
+                # Route back to the agent as a new event.
+                await self.enqueue_event(
+                    AgentEvent(
+                        event_type="watcher",
+                        prompt=f"[watcher:{watcher_name}] {message}",
+                        channel_id=event.channel_id,
+                        dedupe_key=f"watcher:{watcher_name}:{self.session_id}",
+                    ),
+                )
+
     def _render_prompt(self, event: AgentEvent) -> str:
         journal_entries = _tail_jsonl(
             self.layout.journal_log,
@@ -810,6 +857,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 final_text=final_text,
             )
             await self._run_post_turn_git_sync(event)
+            await self._run_post_turn_watchers(event)
         finally:
             self._reset_send_message_circuit_breaker()
             self._current_turn_sent_messages = None

@@ -118,7 +118,7 @@ PY
 
 ## Cross-Referencing with Memory Skill
 
-The memory skill (`/.open_strix_builtin_skills/memory/SKILL.md`) covers:
+The memory skill covers:
 - **When and how to write memory blocks** — criteria for block vs file storage
 - **Maintenance** — block size monitoring, pruning, file frequency analysis
 - **File organization** — cross-references between blocks and state files
@@ -126,7 +126,7 @@ The memory skill (`/.open_strix_builtin_skills/memory/SKILL.md`) covers:
 Use introspection to find problems. Use memory to fix the persistent ones (update
 blocks, reorganize files, add cross-references).
 
-The file frequency report (`/.open_strix_builtin_skills/scripts/file_frequency_report.py`)
+The file frequency report (`scripts/file_frequency_report.py`)
 bridges both skills — it reads events.jsonl to find which files you access most,
 informing both debugging (are you reading the same file repeatedly?) and memory
 optimization (should hot files become blocks?).
@@ -135,19 +135,39 @@ optimization (should hot files become blocks?).
 
 For specific debugging workflows, read these files:
 
-- **Scheduled job issues?** → Read `/.open_strix_builtin_skills/introspection/debugging-jobs.md`
+- **Scheduled job issues?** → Read [`debugging-jobs.md`](debugging-jobs.md)
   Covers: job not firing, firing at wrong time, cron vs time_of_day, timezone traps,
   validation errors, prompt failures
 
-- **Communication pattern issues?** → Read `/.open_strix_builtin_skills/introspection/debugging-communication.md`
+- **Communication pattern issues?** → Read [`debugging-communication.md`](debugging-communication.md)
   Covers: messages not sending, circuit breaker triggers, silent failures,
   duplicate messages, channel confusion, engagement pattern analysis
 
-- **Behavioral drift after model changes or block edits?** → Read `/.open_strix_builtin_skills/introspection/debugging-drift.md`
+- **Behavioral drift after model changes or block edits?** → Read [`debugging-drift.md`](debugging-drift.md)
   Covers: response rate tracking, cross-platform routing audit, model change
   before/after comparison, silence rate trends, topic engagement shifts
 
-- **Identity or operational drift?** → Read `/.open_strix_builtin_skills/onboarding/SKILL.md`
+- **Watcher configuration and debugging?** → Read [`debugging-watchers.md`](debugging-watchers.md)
+  Covers: `watchers.json` format, event triggers (`turn_complete`,
+  `session_start`, `session_end`), input/output contracts, routing, environment
+  variables, debugging checklist.
+  Suggested patterns: cron review, multi-signal, stateful, threshold escalation,
+  baseline comparison, frequency anomaly, cross-session consistency.
+  Example watchers:
+  [`silent_session.py`](watcher-examples/silent_session.py),
+  [`codex_bypass.py`](watcher-examples/codex_bypass.py).
+  Skill structure validation via
+  [`dag_lint.py`](../scripts/dag_lint.py).
+
+- **When and why to use algedonic signals?** → Read [`debugging-algedonic.md`](debugging-algedonic.md)
+  Covers: VSM context for behavioral monitoring, eight anti-pattern categories
+  (agreement violations, silent sessions, behavioral shift, metric gaming,
+  performative compliance, scope creep, context hoarding, premature escalation),
+  detection shapes, in-process vs out-of-process trade-offs, what to do with
+  findings (immediate fixes, persistent patterns, structural escalation),
+  watcher design decisions
+
+- **Identity or operational drift?** → Read the onboarding skill's `SKILL.md`
   Recovery from drift is structurally the same as onboarding. If introspection reveals
   stale blocks, broken schedules, or behavior that doesn't match your persona, the
   onboarding skill provides the framework for re-establishing each component.
