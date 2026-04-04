@@ -586,6 +586,12 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
             except FileNotFoundError:
                 continue  # block deleted between glob and read (TOCTOU race)
+            except yaml.YAMLError as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Skipping corrupted block %s: %s", path.name, exc,
+                )
+                continue
             if not isinstance(loaded, dict):
                 continue
 

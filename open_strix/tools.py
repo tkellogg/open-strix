@@ -232,6 +232,14 @@ def _run_shell(command: str, timeout_seconds: int) -> subprocess.CompletedProces
 
 
 class ToolsMixin:
+    def _is_memory_block_path(self, resolved: Path) -> bool:
+        """Return True if *resolved* points to a YAML file inside the blocks/ directory."""
+        blocks_dir = self.layout.blocks_dir.resolve()
+        return (
+            resolved.suffix in (".yaml", ".yml")
+            and (resolved.parent == blocks_dir or blocks_dir in resolved.parents)
+        )
+
     def _reset_send_message_circuit_breaker(self) -> None:
         self._send_message_last_text_normalized = None
         self._send_message_similarity_streak = 0
@@ -778,6 +786,12 @@ class ToolsMixin:
             if not resolved.is_file():
                 return f"File not found: {resolved}"
 
+            if self._is_memory_block_path(resolved):
+                return (
+                    f"Cannot edit memory block {resolved.name} with edit_file — "
+                    "use update_memory_block instead to ensure valid YAML."
+                )
+
             try:
                 content = await asyncio.to_thread(resolved.read_text, encoding="utf-8")
             except OSError as exc:
@@ -819,6 +833,13 @@ class ToolsMixin:
                 content: The full content to write.
             """
             resolved = Path(file_path).expanduser().resolve()
+
+            if self._is_memory_block_path(resolved):
+                return (
+                    f"Cannot write memory block {resolved.name} with write_file — "
+                    "use update_memory_block instead to ensure valid YAML."
+                )
+
             resolved.parent.mkdir(parents=True, exist_ok=True)
 
             try:
