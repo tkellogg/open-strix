@@ -1,0 +1,100 @@
+name: Stable Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.1.41). Leave empty to use pyproject.toml version.'
+        required: false
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv sync --dev
+      - run: uv run pytest -x --ignore=tests/test_onboarding_flow.py --ignore=tests/test_tools_registration.py
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            version="${{ inputs.version }}"
+          else
+            version=$(python3 -c "
+          import re
+          text = open('pyproject.toml').read()
+          m = re.search(r'version\s*=\s*\"([^\"]+)\"', text)
+          v = m.group(1)
+          # Strip rc suffix if present
+          import re as re2
+          print(re2.sub(r'rc\d+', '', v))
+          ")
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Stable release version: $version"
+
+      - name: Set version in pyproject.toml
+        run: |
+          python3 -c "
+          import re
+          text = open('pyproject.toml').read()
+          text = re.sub(r'version\s*=\s*\"[^\"]+\"', 'version = \"${{ steps.version.outputs.version }}\"', text)
+          open('pyproject.toml', 'w').write(text)
+          "
+
+      - name: Build and publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          uv build
+          uv publish
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git diff --cached --quiet || git commit -m "release: v${{ steps.version.outputs.version }}"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin main --tags
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Generate changelog from commits since last stable tag
+          last_tag=$(git tag --list 'v*' --sort=-v:refname | grep -v 'rc' | head -2 | tail -1 || true)
+          if [ -n "$last_tag" ]; then
+            changelog=$(git log --oneline "$last_tag"..HEAD~1 --no-merges)
+          else
+            changelog="Initial release"
+          fi
+
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --notes "## Changes
+
+          $changelog
+
+          ---
+          Published to [PyPI](https://pypi.org/project/open-strix/${{ steps.version.outputs.version }}/)."

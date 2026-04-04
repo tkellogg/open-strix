@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -368,6 +369,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
 
         self.phone_book = load_phone_book(self.layout.phone_book_file)
         self.supervisor = Supervisor(self.layout.state_dir / "climbers")
+        self._draining = False
         self.mcp_manager: MCPManager | None = None
         self.agent = self._create_agent()
 
@@ -735,6 +737,9 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
     async def _event_worker(self) -> None:
         while True:
             event = await self.queue.get()
+            if self._draining:
+                self.log_event("drain_skip_event", event_type=event.event_type)
+                break
             self.current_channel_id = event.channel_id
             self.current_event_label = event.scheduler_name or event.event_type
             try:
@@ -772,6 +777,9 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             finally:
                 if event.dedupe_key:
                     self.pending_scheduler_keys.discard(event.dedupe_key)
+                if self._draining:
+                    self.log_event("drain_complete", last_event=event.event_type)
+                    break
                 self.current_channel_id = None
                 self.current_event_label = None
                 self.queue.task_done()
@@ -944,6 +952,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 )
 
         self.worker_task = asyncio.create_task(self._event_worker())
+        self._install_drain_handler()
         self.scheduler.start()
         self._reload_scheduler_jobs()
         self.supervisor.start_all()
@@ -997,6 +1006,35 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             return
 
         await self._stdin_mode()
+
+    def _install_drain_handler(self) -> None:
+        """Register SIGQUIT to initiate graceful drain on Unix systems."""
+        if not hasattr(signal, "SIGQUIT"):
+            return
+        loop = asyncio.get_running_loop()
+
+        def _on_sigquit() -> None:
+            self.log_event("drain_signal_received")
+            print("[open-strix] SIGQUIT received — draining after current turn", flush=True)
+            self._draining = True
+            # If the worker is idle (waiting on queue.get), unblock it
+            # by pushing a sentinel; the drain check will skip + break.
+            self.queue.put_nowait(AgentEvent(event_type="drain_sentinel", prompt="", channel_id=""))
+            # Schedule shutdown after the worker has had time to finish
+            loop.create_task(self._drain_then_stop())
+
+        loop.add_signal_handler(signal.SIGQUIT, _on_sigquit)
+
+    async def _drain_then_stop(self) -> None:
+        """Wait for the event worker to finish its current turn, then stop."""
+        if self.worker_task is not None:
+            try:
+                await asyncio.wait_for(self.worker_task, timeout=300)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+        # Close Discord to unblock run()
+        if self.discord_client is not None and not self.discord_client.is_closed():
+            await self.discord_client.close()
 
     async def shutdown(self) -> None:
         self.log_event("app_shutdown_start")

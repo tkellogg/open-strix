@@ -1,0 +1,85 @@
+name: Prerelease
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv sync --dev
+      - run: uv run pytest -x --ignore=tests/test_onboarding_flow.py --ignore=tests/test_tools_registration.py
+
+  prerelease:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Compute rc version
+        id: version
+        run: |
+          # Read base version from pyproject.toml
+          base=$(python3 -c "
+          import re
+          text = open('pyproject.toml').read()
+          m = re.search(r'version\s*=\s*\"([^\"]+)\"', text)
+          print(m.group(1))
+          ")
+
+          # Strip any existing rc/dev suffix to get the base
+          base=$(echo "$base" | sed 's/rc[0-9]*//' | sed 's/\.dev[0-9]*//')
+
+          # Count commits since last stable tag, or since beginning
+          last_tag=$(git tag --list 'v*' --sort=-v:refname | grep -v 'rc' | head -1 || true)
+          if [ -n "$last_tag" ]; then
+            rc_num=$(git rev-list --count "$last_tag"..HEAD)
+          else
+            rc_num=$(git rev-list --count HEAD)
+          fi
+
+          rc_version="${base}rc${rc_num}"
+          echo "version=$rc_version" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Prerelease version: $rc_version"
+
+      - name: Set version in pyproject.toml
+        run: |
+          python3 -c "
+          import re
+          text = open('pyproject.toml').read()
+          text = re.sub(r'version\s*=\s*\"[^\"]+\"', 'version = \"${{ steps.version.outputs.version }}\"', text)
+          open('pyproject.toml', 'w').write(text)
+          "
+          cat pyproject.toml | head -5
+
+      - name: Build and publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          uv build
+          uv publish
+
+      - name: Tag prerelease
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
