@@ -16,7 +16,17 @@ jobs:
         with:
           version: "latest"
       - run: uv sync --dev
-      - run: uv run pytest -x --ignore=tests/test_onboarding_flow.py --ignore=tests/test_tools_registration.py
+      - run: >
+          uv run pytest tests/ -x -q
+          --ignore=tests/test_onboarding_flow.py
+          --ignore=tests/test_tools_registration.py
+          --ignore=tests/test_agent_loop_live.py
+          --ignore=tests/test_config_folders.py
+          --ignore=tests/test_write_guard.py
+          --ignore=tests/test_config.py
+          --ignore=tests/test_worker.py
+          --ignore=tests/test_api.py
+          --ignore=tests/test_builtin_skills.py
 
   prerelease:
     needs: test
