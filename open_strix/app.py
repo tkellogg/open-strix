@@ -370,6 +370,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self._send_message_similarity_streak = 0
         self._send_message_circuit_breaker_active = False
         self._send_message_warning_reaction_sent = False
+        self._last_turn_failure: str | None = None
 
         self.phone_book = load_phone_book(self.layout.phone_book_file)
         self.supervisor = Supervisor(self.layout.state_dir / "climbers")
@@ -730,6 +731,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 "source_id": event.source_id,
                 "source_platform": event.source_platform,
             },
+            last_turn_failure=self._last_turn_failure,
         )
 
     def _load_blocks_for_prompt(self) -> list[dict[str, Any]]:
@@ -755,7 +757,14 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             self.current_turn_start = time.monotonic()
             try:
                 await self._process_event(event)
+                self._last_turn_failure = None
             except SendMessageCircuitBreakerStop as exc:
+                self._last_turn_failure = (
+                    "Your previous turn was terminated by the send_message circuit breaker "
+                    "(repeated near-duplicate messages). Before retrying, reflect on what "
+                    "caused the loop. Consider using the five-whys skill to find the root "
+                    "cause before attempting a different approach."
+                )
                 self.log_event(
                     "warning",
                     where="event_worker",
@@ -766,6 +775,11 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     **_error_log_fields(exc),
                 )
             except Exception as exc:
+                self._last_turn_failure = (
+                    f"Your previous turn ended with an error: {type(exc).__name__}: {exc}. "
+                    "Before retrying, reflect on what went wrong. If this is a recurring "
+                    "failure, consider using the five-whys skill to find the structural cause."
+                )
                 reacted = False
                 if _should_react_to_error(event):
                     reacted = await self._react_to_latest_message(

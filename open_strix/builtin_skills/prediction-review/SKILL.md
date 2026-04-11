@@ -162,6 +162,22 @@ Infrastructure: X/Y (expected ~50%)
 
 If collaborative accuracy is high but observational is low, that's normal — don't let easy wins inflate your overall number. The interesting question is always: **how do I get better at the hard ones?**
 
+## When a Prediction Misses — Root Cause Reflection
+
+Logging `prediction_true: false` is the beginning, not the end. A miss means your world model was wrong about something. The interesting question is: **what structural property of your model produced the wrong prediction?**
+
+For each miss, ask:
+1. **What did I assume that turned out to be false?** (Not "I was wrong" but "I assumed X, and X wasn't true.")
+2. **Is this a one-off or a pattern?** Check your previous prediction reviews — have you missed similar predictions before?
+3. **If it's a pattern or genuinely surprising**, use the **five-whys** skill to decompose it. The prediction miss is the problem statement; the 5 Whys finds the structural gap in your world model.
+
+Don't run 5 Whys on every miss — collaborative misses and obvious infrastructure failures don't need it. Run it when:
+- An observational prediction misses and you can't immediately explain why
+- The same category of prediction keeps missing
+- The miss reveals something about how your human, your environment, or your own reasoning works that you didn't know
+
+The goal: predictions that miss should make you smarter, not just more cautious.
+
 ## Common Miss Patterns (from real data)
 
 - **Infrastructure failures are unpredictable:** "OLMoE results will come in" → FALSE (Strix was down with infinite loop bug). You can't predict other agents' uptime.

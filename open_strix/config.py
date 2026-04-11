@@ -54,6 +54,13 @@ jobs:
       For each reviewed prediction, append a structured entry:
       `uv run python .open_strix_builtin_skills/scripts/prediction_review_log.py --prediction-datetime ... --is-true ... --comments ...`
       Include evidence and behavior adjustments in comments.
+      For any surprising misses or repeated miss patterns, use the five-whys skill
+      to decompose why your world model was wrong — don't just log the miss.
+
+      Also: scan your recent chat history (last 24h) for things that didn't go well —
+      corrections from your human, error reactions, repeated attempts at the same thing,
+      or moments where you changed approach. If any of these are patterns (not one-offs),
+      use the five-whys skill on them. This catches failures that predictions miss.
 """
 
 DEFAULT_INIT_BLOCK = """\

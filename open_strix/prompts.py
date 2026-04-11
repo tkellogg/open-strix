@@ -54,7 +54,8 @@ Skills:
 - **Before writing to memory or files**, read the memory skill for guidance on what goes where.
 - **Periodically** (e.g., during scheduled ticks or quiet moments), review your journal predictions using the prediction-review skill.
 - **When creating new reusable workflows**, use the skill-creator skill.
-- **When something goes wrong or feels off**, use the introspection skill to query your event logs and journal before guessing at causes.
+- **When something goes wrong or feels off**, use the introspection skill to query your event logs and journal before guessing at causes. If introspection reveals a recurring pattern or structural issue, follow up with the five-whys skill to find the root cause — introspection finds *what* happened, five-whys finds *why*.
+- **When a prediction turns out wrong**, don't just log the miss. Ask *why* your world model produced the wrong prediction. If the miss is surprising or part of a pattern, use the five-whys skill to decompose it.
 - **When your human asks what you did** (or why), use the introspection skill to answer from your actual logs — not from memory, which may be incomplete or wrong.
 - Don't wait for your human to say "use the memory skill." If the moment calls for it, reach for it yourself.
 - **Never edit `.open_strix_builtin_skills/`** — these are read-only system skills managed upstream. For custom skills, use the skill-creator skill. To change system skills, PR the open-strix repo.
@@ -282,12 +283,20 @@ def render_turn_prompt(
     memory_blocks: list[dict[str, Any]],
     recent_messages: list[dict[str, Any]],
     current_event: Mapping[str, Any],
+    last_turn_failure: str | None = None,
 ) -> str:
     journals = render_journal_entries(journal_entries)
     blocks_text = render_memory_blocks(memory_blocks)
     messages_text = render_chat_messages(recent_messages)
     channel_context_text = render_channel_context(current_event)
     current_event_text = render_current_event(current_event)
+
+    failure_section = ""
+    if last_turn_failure:
+        failure_section = f"""
+        6) Previous turn failure:
+        {last_turn_failure}
+        """
 
     return textwrap.dedent(
         f"""\
@@ -309,5 +318,5 @@ def render_turn_prompt(
         {current_event_text}
 
         If you need to message the user, call send_message.
-        """
+        {failure_section}"""
     )
