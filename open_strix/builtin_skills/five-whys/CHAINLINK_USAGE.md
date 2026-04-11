@@ -8,7 +8,7 @@ analyses. Read SKILL.md first for the methodology — this covers the tooling.
 Make sure you're in your RCA directory (see CHAINLINK_SETUP.md):
 
 ```bash
-cd ~/rca
+cd rca   # relative to your home repo root
 ```
 
 All chainlink commands below assume you're in a directory with a `.chainlink/`
