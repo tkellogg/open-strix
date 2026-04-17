@@ -37,13 +37,23 @@ class SchedulerJob:
         return data
 
 
+# Valid event triggers for watchers (non-cron).
+VALID_WATCHER_TRIGGERS = frozenset({"turn_complete", "session_start", "session_end"})
+
+
 @dataclass
-class PollerConfig:
-    """A poller declared in a skill's pollers.json."""
+class WatcherConfig:
+    """Unified config for cron-triggered pollers and event-triggered hooks.
+
+    A watcher has *either* a ``cron`` schedule or an event ``trigger`` —
+    never both.  Legacy ``pollers.json`` entries are loaded as watchers
+    with ``trigger=None``.
+    """
 
     name: str
     command: str
-    cron: str
+    cron: str | None
+    trigger: str | None
     env: dict[str, str]
     skill_dir: Path
 
@@ -111,9 +121,13 @@ class SchedulerMixin:
                 pass
             raise
 
-    def _discover_pollers(self) -> list[PollerConfig]:
-        """Scan skill directories for pollers.json files."""
-        pollers: list[PollerConfig] = []
+    def _discover_pollers(self) -> list[WatcherConfig]:
+        """Scan skill directories for legacy pollers.json files.
+
+        Returns WatcherConfig instances with ``trigger=None`` for backward
+        compatibility.  New skills should use ``watchers.json`` instead.
+        """
+        pollers: list[WatcherConfig] = []
         skills_dir = self.layout.skills_dir
         if not skills_dir.exists():
             return pollers
@@ -164,15 +178,103 @@ class SchedulerMixin:
                 if not isinstance(env, dict):
                     env = {}
                 pollers.append(
-                    PollerConfig(
+                    WatcherConfig(
                         name=name,
                         command=command,
                         cron=cron,
+                        trigger=None,
                         env={str(k): str(v) for k, v in env.items()},
                         skill_dir=skill_dir,
                     ),
                 )
         return pollers
+
+    def _discover_watchers(self) -> list[WatcherConfig]:
+        """Scan skill directories for watchers.json files.
+
+        Each entry must have ``name``, ``command``, and exactly one of
+        ``cron`` (schedule-triggered) or ``trigger`` (event-triggered).
+        """
+        watchers: list[WatcherConfig] = []
+        skills_dir = self.layout.skills_dir
+        if not skills_dir.exists():
+            return watchers
+
+        for watchers_file in sorted(skills_dir.rglob("watchers.json")):
+            skill_dir = watchers_file.parent
+            try:
+                raw = json.loads(watchers_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                self.log_event(
+                    "watcher_invalid_json",
+                    path=str(watchers_file),
+                    error=str(exc),
+                )
+                continue
+
+            if not isinstance(raw, dict):
+                self.log_event(
+                    "watcher_invalid_format",
+                    path=str(watchers_file),
+                    error="expected a JSON object with 'watchers' key",
+                )
+                continue
+
+            entries = raw.get("watchers", [])
+            if not isinstance(entries, list):
+                self.log_event(
+                    "watcher_invalid_format",
+                    path=str(watchers_file),
+                    error="'watchers' key must be an array",
+                )
+                continue
+
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name", "")).strip()
+                command = str(entry.get("command", "")).strip()
+                if not name or not command:
+                    self.log_event(
+                        "watcher_missing_fields",
+                        path=str(watchers_file),
+                        entry=entry,
+                    )
+                    continue
+                cron = str(entry.get("cron", "")).strip() or None
+                trigger = str(entry.get("trigger", "")).strip() or None
+                # Must have exactly one of cron or trigger.
+                if bool(cron) == bool(trigger):
+                    self.log_event(
+                        "watcher_missing_fields",
+                        path=str(watchers_file),
+                        entry=entry,
+                        error="watcher must have exactly one of 'cron' or 'trigger'",
+                    )
+                    continue
+                if trigger and trigger not in VALID_WATCHER_TRIGGERS:
+                    self.log_event(
+                        "watcher_invalid_trigger",
+                        path=str(watchers_file),
+                        name=name,
+                        trigger=trigger,
+                        valid_triggers=sorted(VALID_WATCHER_TRIGGERS),
+                    )
+                    continue
+                env = entry.get("env", {})
+                if not isinstance(env, dict):
+                    env = {}
+                watchers.append(
+                    WatcherConfig(
+                        name=name,
+                        command=command,
+                        cron=cron,
+                        trigger=trigger,
+                        env={str(k): str(v) for k, v in env.items()},
+                        skill_dir=skill_dir,
+                    ),
+                )
+        return watchers
 
     def _reload_scheduler_jobs(self) -> None:
         for job in self.scheduler.get_jobs():
@@ -218,7 +320,7 @@ class SchedulerMixin:
                 max_instances=1,
             )
 
-        # Register pollers from skills/*/pollers.json.
+        # Register pollers from skills/*/pollers.json (backward compat).
         pollers = self._discover_pollers()
         for poller in pollers:
             try:
@@ -242,11 +344,47 @@ class SchedulerMixin:
                 max_instances=1,
             )
 
+        # Register watchers from skills/*/watchers.json.
+        all_watchers = self._discover_watchers()
+        cron_watchers = [w for w in all_watchers if w.cron]
+        event_watchers = [w for w in all_watchers if w.trigger]
+
+        # Cron-based watchers get scheduled just like pollers.
+        for watcher in cron_watchers:
+            try:
+                trigger = CronTrigger.from_crontab(watcher.cron, timezone=UTC)  # type: ignore[arg-type]
+            except ValueError as exc:
+                self.log_event(
+                    "watcher_invalid_cron",
+                    name=watcher.name,
+                    cron=watcher.cron,
+                    error=str(exc),
+                )
+                continue
+
+            self.scheduler.add_job(
+                self._on_watcher_cron_fire,
+                trigger=trigger,
+                kwargs={"watcher": watcher},
+                id=f"open_strix:watcher:{watcher.name}",
+                replace_existing=True,
+                coalesce=True,
+                max_instances=1,
+            )
+
+        # Event-triggered watchers are stored for runtime dispatch.
+        self._event_watchers: dict[str, list[WatcherConfig]] = {}
+        for watcher in event_watchers:
+            assert watcher.trigger is not None
+            self._event_watchers.setdefault(watcher.trigger, []).append(watcher)
+
         scheduler_count = len(self._load_scheduler_jobs())
         self.log_event(
             "scheduler_reloaded",
             jobs=scheduler_count,
             pollers=len(pollers),
+            watchers_cron=len(cron_watchers),
+            watchers_event=len(event_watchers),
         )
 
     async def _on_scheduler_fire(self, name: str, prompt: str, channel_id: str | None = None) -> None:
@@ -261,7 +399,7 @@ class SchedulerMixin:
             ),
         )
 
-    async def _on_poller_fire(self, poller: PollerConfig) -> None:
+    async def _on_poller_fire(self, poller: WatcherConfig) -> None:
         """Run a poller subprocess and enqueue events from its stdout."""
         env = {**os.environ, **poller.env}
         env["STATE_DIR"] = str(poller.skill_dir)
@@ -360,3 +498,148 @@ class SchedulerMixin:
             name=poller.name,
             events_emitted=event_count,
         )
+
+    async def _on_watcher_cron_fire(self, watcher: WatcherConfig) -> None:
+        """Run a cron-based watcher — same execution model as pollers."""
+        await self._on_poller_fire(watcher)
+
+    async def _run_watcher_subprocess(
+        self,
+        watcher: WatcherConfig,
+        stdin_data: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Run an event-triggered watcher, sending context on stdin.
+
+        Returns parsed JSONL lines from stdout.
+        """
+        env = {**os.environ, **watcher.env}
+        env["STATE_DIR"] = str(watcher.skill_dir)
+        env["WATCHER_NAME"] = watcher.name
+
+        stdin_bytes = (json.dumps(stdin_data) + "\n").encode()
+
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                watcher.command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(watcher.skill_dir),
+                env=env,
+            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(input=stdin_bytes),
+                timeout=60,
+            )
+        except asyncio.TimeoutError:
+            self.log_event(
+                "watcher_timeout",
+                name=watcher.name,
+                trigger=watcher.trigger,
+                timeout_seconds=60,
+            )
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            return []
+        except Exception as exc:
+            self.log_event(
+                "watcher_exec_error",
+                name=watcher.name,
+                trigger=watcher.trigger,
+                error=str(exc),
+            )
+            return []
+
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+        if stderr_text:
+            self.log_event(
+                "watcher_stderr",
+                name=watcher.name,
+                stderr=stderr_text[:2000],
+            )
+
+        if proc.returncode != 0:
+            self.log_event(
+                "watcher_nonzero_exit",
+                name=watcher.name,
+                trigger=watcher.trigger,
+                returncode=proc.returncode,
+            )
+            return []
+
+        stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
+        if not stdout_text:
+            return []
+
+        results: list[dict[str, Any]] = []
+        for line in stdout_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                self.log_event(
+                    "watcher_invalid_line",
+                    name=watcher.name,
+                    line=line[:500],
+                )
+                continue
+            if isinstance(parsed, dict):
+                results.append(parsed)
+        return results
+
+    async def fire_watchers(
+        self,
+        trigger_type: str,
+        *,
+        session_id: str,
+        events_path: str,
+    ) -> list[dict[str, Any]]:
+        """Fire all event-triggered watchers registered for *trigger_type*.
+
+        Each watcher receives minimal context on stdin per the watcher
+        contract:
+
+        .. code-block:: json
+
+            {"trigger": "turn_complete", "trace_id": "...", "events_path": "/..."}
+
+        Returns all parsed JSONL findings from all watchers.
+        """
+        watchers = getattr(self, "_event_watchers", {}).get(trigger_type, [])
+        if not watchers:
+            return []
+
+        stdin_data = {
+            "trigger": trigger_type,
+            "trace_id": session_id,
+            "events_path": events_path,
+        }
+
+        all_findings: list[dict[str, Any]] = []
+        for watcher in watchers:
+            findings = await self._run_watcher_subprocess(watcher, stdin_data)
+            for finding in findings:
+                finding.setdefault("watcher", watcher.name)
+                all_findings.append(finding)
+
+            if findings:
+                self.log_event(
+                    "watcher_findings",
+                    name=watcher.name,
+                    trigger=trigger_type,
+                    finding_count=len(findings),
+                )
+
+        if all_findings:
+            self.log_event(
+                "watchers_complete",
+                trigger=trigger_type,
+                total_findings=len(all_findings),
+                watchers_run=len(watchers),
+            )
+
+        return all_findings

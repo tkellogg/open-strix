@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from open_strix.scheduler import PollerConfig, SchedulerMixin
+from open_strix.scheduler import WatcherConfig, SchedulerMixin
 
 
 class FakeLayout:
@@ -179,10 +179,11 @@ class TestOnPollerFire:
             'print(json.dumps({"poller": "test", "prompt": "something happened"}))\n'
         )
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="test-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={},
             skill_dir=skill_dir,
         )
@@ -202,10 +203,11 @@ class TestOnPollerFire:
         skill_dir.mkdir(parents=True)
         (skill_dir / "poller.py").write_text("pass\n")
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="quiet-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={},
             skill_dir=skill_dir,
         )
@@ -223,10 +225,11 @@ class TestOnPollerFire:
         skill_dir.mkdir(parents=True)
         (skill_dir / "poller.py").write_text("import sys; sys.exit(1)\n")
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="fail-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={},
             skill_dir=skill_dir,
         )
@@ -246,10 +249,11 @@ class TestOnPollerFire:
             'print(json.dumps({"poller": "env-test", "prompt": os.environ.get("MY_VAR", "missing")}))\n'
         )
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="env-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={"MY_VAR": "hello"},
             skill_dir=skill_dir,
         )
@@ -271,10 +275,11 @@ class TestOnPollerFire:
             'print(json.dumps({"poller": pn, "prompt": f"dir={sd} name={pn}"}))\n'
         )
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="state-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={},
             skill_dir=skill_dir,
         )
@@ -296,10 +301,11 @@ class TestOnPollerFire:
             '    print(json.dumps({"poller": "multi", "prompt": f"event {i}"}))\n'
         )
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="multi-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={},
             skill_dir=skill_dir,
         )
@@ -322,10 +328,11 @@ class TestOnPollerFire:
             'print(json.dumps({"poller": "mixed", "prompt": "valid line"}))\n'
         )
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="mixed-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={},
             skill_dir=skill_dir,
         )
@@ -347,10 +354,11 @@ class TestOnPollerFire:
             'print(json.dumps({"poller": "bsky", "source_platform": "bluesky", "prompt": "new reply"}))\n'
         )
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="platform-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={},
             skill_dir=skill_dir,
         )
@@ -372,10 +380,11 @@ class TestOnPollerFire:
             'print(json.dumps({"poller": "test", "prompt": "event without platform"}))\n'
         )
 
-        poller = PollerConfig(
+        poller = WatcherConfig(
             name="noplatform-poller",
             command="python poller.py",
             cron="*/5 * * * *",
+            trigger=None,
             env={},
             skill_dir=skill_dir,
         )

@@ -293,6 +293,109 @@ def test_disable_builtin_skills_via_bootstrap(tmp_path: Path) -> None:
     assert (builtin_dir / "scripts" / "prediction_review_log.py").exists()
 
 
+def test_dag_lint_finds_unreferenced_files(tmp_path: Path) -> None:
+    """DAG lint flags files not reachable from the root."""
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+
+    # Root references guide.md but not orphan.md
+    (skill_dir / "SKILL.md").write_text(
+        "# My Skill\n\nSee [the guide](guide.md) for details.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "guide.md").write_text(
+        "# Guide\n\nStep-by-step instructions.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "orphan.md").write_text(
+        "# Orphan\n\nNobody references me.\n",
+        encoding="utf-8",
+    )
+
+    script = Path(__file__).parent.parent / "open_strix" / "builtin_skills" / "scripts" / "dag_lint.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), str(skill_dir), "--root", "SKILL.md", "--format", "json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+
+    assert result["root"] == "SKILL.md"
+    assert "guide.md" in result["reachable"]
+    assert "orphan.md" in result["unreferenced"]
+    assert result["stats"]["total_files"] == 3
+    assert result["stats"]["reachable_files"] == 2
+    assert result["stats"]["unreferenced_files"] == 1
+
+
+def test_dag_lint_strict_mode_exits_nonzero_on_unreferenced(tmp_path: Path) -> None:
+    """DAG lint --strict exits 1 when unreferenced files exist."""
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+
+    (skill_dir / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
+    (skill_dir / "unused.md").write_text("# Unused\n", encoding="utf-8")
+
+    script = Path(__file__).parent.parent / "open_strix" / "builtin_skills" / "scripts" / "dag_lint.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), str(skill_dir), "--root", "SKILL.md", "--strict"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 1
+    assert "unreferenced" in proc.stderr.lower()
+
+
+def test_dag_lint_full_coverage_exits_zero(tmp_path: Path) -> None:
+    """DAG lint --strict exits 0 when all files are reachable."""
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+
+    (skill_dir / "SKILL.md").write_text(
+        "# Skill\n\nRead [details](details.md).\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "details.md").write_text("# Details\n", encoding="utf-8")
+
+    script = Path(__file__).parent.parent / "open_strix" / "builtin_skills" / "scripts" / "dag_lint.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), str(skill_dir), "--root", "SKILL.md", "--strict", "--format", "json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["stats"]["unreferenced_files"] == 0
+
+
+def test_dag_lint_mermaid_output_includes_edges(tmp_path: Path) -> None:
+    """DAG lint mermaid output includes graph edges."""
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+
+    (skill_dir / "SKILL.md").write_text(
+        "# Skill\n\nSee [guide](guide.md).\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "guide.md").write_text("# Guide\n", encoding="utf-8")
+
+    script = Path(__file__).parent.parent / "open_strix" / "builtin_skills" / "scripts" / "dag_lint.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), str(skill_dir), "--root", "SKILL.md", "--format", "mermaid"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "graph TD" in proc.stdout
+    assert "SKILL_md" in proc.stdout
+    assert "-->" in proc.stdout
+
+
 def test_bootstrap_cleans_legacy_builtin_script_copies(tmp_path: Path) -> None:
     home = tmp_path / "agent-home"
     home.mkdir(parents=True, exist_ok=True)
