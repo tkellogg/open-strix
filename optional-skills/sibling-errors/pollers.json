@@ -1,0 +1,12 @@
+{
+  "pollers": [
+    {
+      "name": "sibling-errors",
+      "command": "python poller.py",
+      "cron": "*/10 * * * *",
+      "env": {
+        "SIBLINGS": ""
+      }
+    }
+  ]
+}
