@@ -36,6 +36,7 @@ from .config import (
     DEFAULT_SCHEDULER,
     STATE_DIR_NAME,
     AppConfig,
+    DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
     DEFAULT_MODEL_MAX_RETRIES,
     RepoLayout,
     bootstrap_home_repo,
@@ -120,11 +121,19 @@ def _model_for_deep_agents(model_name: str) -> str:
     return f"{DEFAULT_MODEL_PROVIDER}:{cleaned}"
 
 
-def _build_chat_model(model_name: str, *, max_retries: int = DEFAULT_MODEL_MAX_RETRIES) -> Any:
-    # Keep the same OpenAI initialization behavior as deepagents while making
-    # provider retries explicit in open-strix config.
+def _build_chat_model(
+    model_name: str,
+    *,
+    max_retries: int = DEFAULT_MODEL_MAX_RETRIES,
+    max_tokens: int = DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
+) -> Any:
+    # langchain-anthropic falls back to 4096 max output tokens for any model
+    # not in its Claude-only profile table. MiniMax-M2.5 triggers that fallback,
+    # which truncates tool_use args (e.g. write_file content) mid-stream. Pass
+    # max_tokens explicitly so large tool calls fit.
     model_init_params: dict[str, Any] = {
         "max_retries": max(0, int(max_retries)),
+        "max_tokens": max(1, int(max_tokens)),
     }
     if model_name.startswith("openai:"):
         model_init_params["use_responses_api"] = True
@@ -464,6 +473,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         model = _build_chat_model(
             model_name,
             max_retries=self.config.model_max_retries,
+            max_tokens=self.config.model_max_output_tokens,
         )
         skills_sources: list[str] = []
         if self.layout.skills_dir.exists():
