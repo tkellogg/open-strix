@@ -844,6 +844,60 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         return errors
 
     async def _process_event(self, event: AgentEvent) -> None:
+        await self._run_turn(event, batched=False)
+
+        # Part 2 of #91: end-of-turn batching layer. After responding on a
+        # Discord channel, drain any same-channel discord_message events that
+        # arrived while the first turn was running and process them in one
+        # follow-up turn so bursts cost 2 turns instead of N.
+        if event.event_type != "discord_message" or not event.channel_id:
+            return
+        drained = self._drain_same_channel_discord_events(event.channel_id)
+        if not drained:
+            return
+        self.log_event(
+            "batched_turn_start",
+            channel_id=event.channel_id,
+            trigger_event_type=event.event_type,
+            batch_size=len(drained),
+        )
+        try:
+            # Newest drained event is the trigger; _render_prompt already pulls
+            # the full recent-channel history (including drained messages).
+            await self._run_turn(drained[-1], batched=True)
+        finally:
+            for drained_event in drained:
+                if drained_event.dedupe_key:
+                    self.pending_scheduler_keys.discard(drained_event.dedupe_key)
+                self.queue.task_done()
+
+    def _drain_same_channel_discord_events(
+        self, channel_id: str
+    ) -> list[AgentEvent]:
+        """Pop all queued discord_message events for ``channel_id`` while
+        preserving other queued events in their original order.
+
+        Mutates the queue's backing deque directly so ``_unfinished_tasks``
+        accounting stays intact — caller is responsible for calling
+        ``self.queue.task_done()`` once per drained event."""
+        internal: deque[AgentEvent] = self.queue._queue  # type: ignore[attr-defined]
+        if not internal:
+            return []
+        drained: list[AgentEvent] = []
+        kept: deque[AgentEvent] = deque()
+        while internal:
+            candidate = internal.popleft()
+            if (
+                candidate.event_type == "discord_message"
+                and candidate.channel_id == channel_id
+            ):
+                drained.append(candidate)
+            else:
+                kept.append(candidate)
+        internal.extend(kept)
+        return drained
+
+    async def _run_turn(self, event: AgentEvent, *, batched: bool) -> None:
         self._current_turn_sent_messages = []
         self._reset_send_message_circuit_breaker()
         # Turn-time instrumentation (#91): baseline measurement that lets the
@@ -940,6 +994,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 scheduler_name=event.scheduler_name,
                 total_seconds=round(time.monotonic() - turn_start, 4),
                 repair_invoke_count=repair_invoke_count,
+                batched=batched,
                 **rounded,
             )
 
