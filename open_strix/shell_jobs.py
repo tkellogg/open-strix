@@ -24,7 +24,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 
 UI_VISIBILITY_THRESHOLD_SECONDS = 10
@@ -50,6 +50,8 @@ class ShellJob:
     last_live_signal: float  # epoch seconds; updated by drainer threads
     exit_code: Optional[int] = None  # None while running
     finished_at: Optional[float] = None
+    channel_id: Optional[str] = None
+    channel_name: Optional[str] = None
     _process: Optional[subprocess.Popen] = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -86,6 +88,8 @@ class ShellJob:
             "seconds_since_last_signal": round(self.seconds_since_last_signal, 2),
             "status": self.status,
             "exit_code": self.exit_code,
+            "channel_id": self.channel_id,
+            "channel_name": self.channel_name,
         }
 
 
@@ -110,11 +114,22 @@ class ShellJobRegistry:
         command: str,
         *,
         argv: list[str],
+        channel_id: Optional[str] = None,
+        channel_name: Optional[str] = None,
+        on_complete: Optional[Callable[["ShellJob"], None]] = None,
     ) -> ShellJob:
         """Spawn argv as a subprocess and register it.
 
         argv is the platform-specific wrapped command
         (e.g. ['bash', '-lc', cmd]).
+
+        channel_id / channel_name optionally record which conversation spawned
+        the job so the completion callback can resume it in-place.
+
+        on_complete, if provided, is invoked from the waiter thread once the
+        subprocess exits and exit_code/finished_at have been set. Exceptions
+        raised by the callback are caught and dropped so the registry stays
+        intact.
         """
         job_id = self._make_job_id()
         stdout_path = self.jobs_dir / f"{job_id}.out"
@@ -153,6 +168,8 @@ class ShellJobRegistry:
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             last_live_signal=started_at,
+            channel_id=channel_id,
+            channel_name=channel_name,
             _process=proc,
         )
 
@@ -179,6 +196,12 @@ class ShellJobRegistry:
             with job._lock:
                 job.exit_code = rc
                 job.finished_at = time.time()
+            if on_complete is not None:
+                try:
+                    on_complete(job)
+                except Exception:
+                    # Never let a callback error break the registry.
+                    pass
 
         threading.Thread(
             target=_drain,

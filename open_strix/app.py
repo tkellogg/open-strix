@@ -357,6 +357,9 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self.current_channel_id: str | None = None
         self.current_event_label: str | None = None
         self.current_turn_start: float | None = None
+        # Captured once run() starts the event loop; worker threads use this
+        # to enqueue events from outside the loop (e.g. shell job waiters).
+        self.loop: asyncio.AbstractEventLoop | None = None
         self.session_id = f"{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
 
         self.message_history_all: deque[dict[str, Any]] = deque(maxlen=500)
@@ -677,6 +680,73 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             queue_size=self.queue.qsize(),
             source_id=event.source_id,
         )
+
+    def _handle_shell_job_complete(self, job: "ShellJob") -> None:
+        """Thread-safe bridge: a shell job waiter thread invokes this when the
+        subprocess exits. Schedules an async handler onto the main event loop
+        so we can enqueue a shell_job_complete event.
+        """
+        if self.loop is None or self.loop.is_closed():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._on_shell_job_complete(job),
+                self.loop,
+            )
+        except Exception:
+            # Never let a waiter-thread crash break the registry.
+            pass
+
+    async def _on_shell_job_complete(self, job: "ShellJob") -> None:
+        """Enqueue a shell_job_complete event so the agent can react to a
+        finished async shell job without re-hydration.
+        """
+        try:
+            data = self.shell_jobs.read_output(
+                job.job_id, tail_lines=100, stream="both"
+            )
+        except Exception:
+            data = {"stdout_tail": "", "stderr_tail": ""}
+
+        stdout_tail = (data.get("stdout_tail") or "").strip()
+        stderr_tail = (data.get("stderr_tail") or "").strip()
+        # Bound each stream so a runaway job doesn't produce a giant prompt.
+        max_chars = 4000
+        if len(stdout_tail) > max_chars:
+            stdout_tail = stdout_tail[-max_chars:]
+        if len(stderr_tail) > max_chars:
+            stderr_tail = stderr_tail[-max_chars:]
+
+        elapsed = round(job.elapsed_seconds, 1)
+        status = job.status
+        lines = [
+            f"Shell job {job.job_id} complete (status={status}, exit_code={job.exit_code}, elapsed={elapsed}s).",
+            f"Command: {job.command}",
+            "",
+            "--- stdout tail ---",
+            stdout_tail or "(empty)",
+            "",
+            "--- stderr tail ---",
+            stderr_tail or "(empty)",
+        ]
+        prompt = "\n".join(lines)
+
+        event = AgentEvent(
+            event_type="shell_job_complete",
+            prompt=prompt,
+            channel_id=job.channel_id,
+            channel_name=job.channel_name,
+            source_id=f"shell_job:{job.job_id}",
+            dedupe_key=f"shell_job_complete:{job.job_id}",
+        )
+        try:
+            await self.enqueue_event(event)
+        except Exception as exc:
+            self.log_event(
+                "shell_job_complete_enqueue_failed",
+                job_id=job.job_id,
+                error=str(exc),
+            )
 
     async def _run_post_turn_git_sync(self, event: AgentEvent) -> str:
         git_result = await asyncio.to_thread(_git_sync, self.home)
@@ -1081,6 +1151,9 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             )
 
     async def run(self) -> None:
+        # Capture the running event loop for cross-thread scheduling
+        # (e.g. shell job completion callbacks).
+        self.loop = asyncio.get_running_loop()
         # Start MCP servers and recreate agent with MCP tools if configured.
         if self.config.mcp_servers:
             self.mcp_manager = MCPManager()
