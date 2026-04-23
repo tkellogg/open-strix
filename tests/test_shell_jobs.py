@@ -119,3 +119,78 @@ def test_read_output_unknown_job(tmp_path: Path) -> None:
     reg = ShellJobRegistry(jobs_dir=tmp_path / "jobs")
     result = reg.read_output("j_does_not_exist", tail_lines=10, stream="both")
     assert "error" in result
+
+
+def test_spawn_records_channel_id(tmp_path: Path) -> None:
+    reg = ShellJobRegistry(jobs_dir=tmp_path / "jobs")
+    cmd = "echo hi"
+    job = reg.spawn(
+        cmd,
+        argv=["bash", "-lc", cmd],
+        channel_id="chan-123",
+        channel_name="test-channel",
+    )
+    assert job.channel_id == "chan-123"
+    assert job.channel_name == "test-channel"
+    snap = job.snapshot()
+    assert snap["channel_id"] == "chan-123"
+    assert snap["channel_name"] == "test-channel"
+
+    assert _wait_until(lambda: _finished(reg.get(job.job_id)))
+
+
+def test_spawn_fires_on_complete_callback(tmp_path: Path) -> None:
+    reg = ShellJobRegistry(jobs_dir=tmp_path / "jobs")
+    calls: list = []
+
+    def on_complete(job) -> None:
+        calls.append(job)
+
+    cmd = "echo done && exit 0"
+    job = reg.spawn(
+        cmd,
+        argv=["bash", "-lc", cmd],
+        channel_id="chan-xyz",
+        on_complete=on_complete,
+    )
+
+    assert _wait_until(lambda: len(calls) == 1, timeout=5.0)
+    assert calls[0].job_id == job.job_id
+    # Callback fires AFTER exit_code/finished_at are set.
+    assert calls[0].exit_code == 0
+    assert calls[0].finished_at is not None
+    assert calls[0].channel_id == "chan-xyz"
+
+
+def test_spawn_on_complete_callback_error_does_not_break_registry(tmp_path: Path) -> None:
+    reg = ShellJobRegistry(jobs_dir=tmp_path / "jobs")
+
+    def bad_callback(job) -> None:
+        raise RuntimeError("boom")
+
+    cmd = "echo fine"
+    job = reg.spawn(
+        cmd,
+        argv=["bash", "-lc", cmd],
+        on_complete=bad_callback,
+    )
+
+    # Job still finishes cleanly even though callback raised.
+    assert _wait_until(lambda: _finished(reg.get(job.job_id)))
+    assert reg.get(job.job_id).exit_code == 0
+
+
+def test_spawn_fires_callback_on_nonzero_exit(tmp_path: Path) -> None:
+    reg = ShellJobRegistry(jobs_dir=tmp_path / "jobs")
+    calls: list = []
+
+    cmd = "exit 3"
+    job = reg.spawn(
+        cmd,
+        argv=["bash", "-lc", cmd],
+        on_complete=lambda j: calls.append(j),
+    )
+
+    assert _wait_until(lambda: len(calls) == 1, timeout=5.0)
+    assert calls[0].exit_code == 3
+    assert calls[0].status == "exited_error"

@@ -650,11 +650,28 @@ class ToolsMixin:
 
             if async_mode:
                 argv = _shell_command_for_platform(normalized_command)
+                # Capture the channel at spawn time so the completion event can
+                # resume the same conversation, even if current_channel_id has
+                # rotated to a different event by the time the job exits.
+                spawn_channel_id = self.current_channel_id
+                spawn_channel_name = None
+                try:
+                    phone_book = getattr(self, "phone_book", None)
+                    if phone_book is not None and spawn_channel_id:
+                        entry = phone_book.entries.get(spawn_channel_id)
+                        if entry is not None:
+                            spawn_channel_name = entry.name
+                except Exception:
+                    spawn_channel_name = None
+                on_complete = getattr(self, "_handle_shell_job_complete", None)
                 try:
                     job = await asyncio.to_thread(
                         self.shell_jobs.spawn,
                         normalized_command,
                         argv=argv,
+                        channel_id=spawn_channel_id,
+                        channel_name=spawn_channel_name,
+                        on_complete=on_complete,
                     )
                 except FileNotFoundError:
                     self.log_event(
