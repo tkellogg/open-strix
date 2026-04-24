@@ -147,6 +147,13 @@ For specific debugging workflows, read these files:
   Covers: response rate tracking, cross-platform routing audit, model change
   before/after comparison, silence rate trends, topic engagement shifts
 
+- **Journal accuracy / self-report calibration?** → Read `/.open_strix_builtin_skills/introspection/dissonance-review.md`
+  Covers: cross-referencing journal claims against event log ground truth,
+  five dissonance types (action_mismatch, invisible_failure, phantom_work,
+  scope_drift, understated_action), what to DO when patterns are found
+  (immediate behavioral fixes, persistent memory updates, structural escalation),
+  scheduling recommendations
+
 - **Identity or operational drift?** → Read `/.open_strix_builtin_skills/onboarding/SKILL.md`
   Recovery from drift is structurally the same as onboarding. If introspection reveals
   stale blocks, broken schedules, or behavior that doesn't match your persona, the
