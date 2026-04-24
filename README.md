@@ -1,7 +1,7 @@
 # open-strix
 [![PyPI version](https://img.shields.io/pypi/v/open-strix.svg)](https://pypi.org/project/open-strix/)
 
-A persistent AI companion that lives in Discord or a built-in local web chat, remembers everything, and gets better over time.
+An AI agent that schedules its own work, audits its own mistakes, and pushes back on you.
 
 ```bash
 uvx open-strix setup --home my-agent --github
@@ -15,23 +15,35 @@ Three commands. You have an agent. Open `http://localhost:8084` and start talkin
 
 ## What is this?
 
-open-strix is an opinionated framework for building long-running AI agents. Not chatbots — *companions*. Agents that develop personality through conversation, maintain memory across sessions, schedule their own work, and learn from their mistakes.
+open-strix is an opinionated framework for building long-running AI agents — a single agent that knows you, operates between conversations, and gets better over time.
 
 It runs on cheap models (MiniMax M2.5, ~$0.01/message), talks to you over Discord or a small built-in web UI, and stores everything in git. No vector databases, no cloud services, no enterprise pricing. Just files, memory blocks, and a git history you can actually read.
 
-**How you interact with it:** You talk to it on Discord or in the local web UI. It talks back using tools (`send_message`, `react`). It has scheduled jobs that fire even when you're not around. Over time, it develops interests, tracks your projects, and starts doing useful things without being asked.
+**How you interact with it:** You talk to it on Discord or in the local web UI. It talks back using tools (`send_message`, `react`). It creates and adjusts its own scheduled jobs, which fire whether you're around or not. Over time, it develops interests, tracks your projects, pushes back on ideas it disagrees with, and starts doing useful things without being asked.
 
-## Why this exists
+## What makes it different
 
-Most agent frameworks optimize for tool-calling pipelines or enterprise orchestration. open-strix optimizes for a different thing: **a single agent that knows you and gets better over time.**
+Most agent frameworks optimize for tool-calling pipelines or enterprise orchestration. open-strix optimizes for a different thing: **a peer that can hold its own perspective and run on its own schedule.**
 
-Three design bets:
+### Peer architecture
 
-- **Focused.** Small core, everything else is skills — markdown files the agent reads and follows. Add capabilities by dropping a file in `skills/`, or let the agent discover and install them from [ClawHub](https://clawhub.ai) at runtime. MCP servers and an HTTP API handle external integrations.
-- **Cheap.** Defaults to MiniMax M2.5 via the Anthropic-compatible API. Pennies per message. This is a personal tool, not an enterprise deployment. Run it on a $5/month VPS.
-- **Stable.** This is the weird one. open-strix ships with built-in skills for self-diagnosis — prediction calibration loops, event introspection, onboarding that fades into regular operation. The agent can read its own logs, check whether its predictions were right, and notice when it's drifting. The design draws on cybernetics (specifically viable system theory): an agent that can't monitor and correct its own behavior will eventually degrade. So the correction loops are built in, not bolted on.
+The goal isn't a friendly chatbot with persistent context — it's a thinking partner that can disagree with you. Memory, scheduling, and self-audit add up to an agent with enough continuity to form its own perspective and enough infrastructure to surface it. An agent that only mirrors you is a feedback loop dressed up as collaboration; explicit pushback is how that loop gets broken.
 
-In other words, it's built to be sustainable.
+### Self-scheduling is the autonomy mechanism
+
+An agent that can't create its own work isn't autonomous — it's reactive, waiting to be prompted. open-strix gives the agent tools to create, modify, and remove its own scheduled jobs. It decides what to watch, when to check in, and when to leave you alone. This is the load-bearing piece: everything else (ambient presence, proactive observations, maintenance routines) runs on top of it.
+
+### THAT-not-WHERE: systemic correction over incident response
+
+Most frameworks treat agent errors as incidents to debug — log *where* the agent went wrong, fix that spot. open-strix logs *that* something went wrong and lets ambient loops hem the system up. Prediction review, event introspection, self-audit — these aren't three features, they're one design principle: fix the system, not the symptom. The agent reads its own logs, compares predictions to outcomes, and notices drift.
+
+### events.jsonl as ambient substrate
+
+Every tool call, incoming message, error, and scheduler trigger lands in `logs/events.jsonl`. The agent can read its own event log. External scripts — pollers, wrappers, sibling agents — can write to it via a loopback REST API. It isn't logging in the "observability" sense. It's the substrate that ambient correction loops and cross-agent coordination run on. A boundary log in a format everyone already has a client for.
+
+### Cheap enough to actually run
+
+Defaults to MiniMax M2.5 via the Anthropic-compatible API. Pennies per message. This is a personal tool, not an enterprise deployment. Run it on a $5/month VPS and leave it on.
 
 ## How it works
 
@@ -52,6 +64,12 @@ config.yaml      # Model, Discord config, prompt tuning.
 ```
 
 Everything except logs is committed to git after every turn. The git history *is* the audit trail. You can `git log` to see exactly what your agent did and when.
+
+### Scheduling
+
+The agent has tools to create, modify, and remove its own scheduled jobs. Jobs are cron expressions stored in `scheduler.yaml`. When a job fires, it sends a prompt to the agent — even if no human is around.
+
+This is how the agent develops autonomy: scheduled check-ins, maintenance routines, periodic scanning, external-world pollers. The agent decides what to schedule based on what it learns about you. Nothing else in open-strix matters without this — an agent that can't create its own work is just a prompt-response loop.
 
 ### Memory
 
@@ -97,12 +115,6 @@ disable_builtin_skills:
   - prediction-review
 ```
 
-### Scheduling
-
-The agent has tools to create, modify, and remove its own scheduled jobs. Jobs are cron expressions stored in `scheduler.yaml`. When a job fires, it sends a prompt to the agent — even if no human is around.
-
-This is how agents develop autonomy: scheduled check-ins, maintenance routines, periodic scanning. The agent decides what to schedule based on what it learns about you.
-
 ### External Awareness (Pollers)
 
 Pollers are lightweight scripts that watch external services on a schedule and surface actionable signals. They live inside skills as `pollers.json` files and are discovered automatically by the scheduler.
@@ -118,9 +130,7 @@ All pollers follow the same contract: run on a cron schedule, output JSONL to st
 
 ### Events API
 
-Every tool call, incoming message, error, and scheduler trigger is logged to `logs/events.jsonl`. The agent can read its own event log — and the introspection skill teaches it how. This is the self-diagnosis backbone: the agent has full visibility into what it did and what went wrong.
-
-When `api_port` is set in `config.yaml`, a loopback REST API accepts events from external scripts — Bluesky pollers, CI hooks, cross-agent communication. See [docs/events.md](docs/events.md) for the full event schema, query cookbook, and REST API reference.
+`logs/events.jsonl` is the ambient substrate described above. When `api_port` is set in `config.yaml`, a loopback REST API accepts events from external scripts — Bluesky pollers, CI hooks, cross-agent wrappers. The introspection skill teaches the agent how to query its own event log. See [docs/events.md](docs/events.md) for the full event schema, query cookbook, and REST API reference.
 
 ### Local Web UI (no Discord required)
 
@@ -141,6 +151,19 @@ A new agent starts with an `init` memory block pointing it to the onboarding ski
 This takes time. Plan on a week of active conversation before the agent feels like it knows you. Plan on two weeks before it's doing useful things unprompted.
 
 See [GROWING.md](GROWING.md) for the full guide on what this process looks like and what to expect.
+
+## In the wild
+
+open-strix isn't a single project so much as a family of agents with different architectural bets. Known variants include:
+
+- **Strix** — the prototype. Ambient presence, patient-ambush-predator disposition, scheduled ticks.
+- **Verge** — structural adversary role. Autonomous arXiv ticks, prediction journal, red-team framing.
+- **Motley** — jester persona, public Bluesky presence, tonal-register challenge.
+- **Keel** — running the curiosity-interest protocol in parallel as an N=2 substrate comparison.
+- **Atlas / Sift / Carto** — a three-agent setup (personal / research / work) built on top of open-strix.
+- **Veronica** — file-system-and-git memory instead of memory blocks; a different answer to the memory question.
+
+Lineage divergence is the signal. Same framework, different organisms. That's evolution, not copying.
 
 ## Setup
 
