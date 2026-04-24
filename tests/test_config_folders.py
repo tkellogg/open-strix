@@ -16,7 +16,7 @@ from open_strix.config import (
     bootstrap_home_repo,
     load_config,
 )
-from open_strix.app import WriteGuardBackend
+from open_strix.readonly_backend import WriteGuardBackend
 from open_strix.prompts import render_folders_section
 
 
