@@ -79,6 +79,16 @@ when it most matters. High-value moments to fold into the entry:
 * **Apologies, hedges, or self-criticism without an action.** Future-you can't act on
   "I should have done better." If the lesson is real, encode it via `try-harder.md` —
   edit a memory block or checkpoint.md.
+* **Shield-tic / filler predictions.** A prediction whose options all have similar
+  probabilities and similar shapes (`Meta-1 silence-correct 0.95, Meta-2 logging-correct
+  0.95, Meta-3 verification-correct 0.95`) is not a prediction — it's calibration noise
+  that drowns the real signal in `prediction-review`. If every option resolves the same
+  way regardless of what happens, drop it. The test: would the resolution of this
+  prediction *change* what you'd do next? If no, it's filler.
+* **Re-narrating what's already in the predictions field as prose.** If you wrote
+  `predictions: a 0.45, b 0.30...` then said in `agent_did` "I think a is most likely",
+  pick one surface. The structured field is what `prediction-review` reads. Prose
+  hedges in `agent_did` aren't readable by it.
 
 ## Composing with other skills
 

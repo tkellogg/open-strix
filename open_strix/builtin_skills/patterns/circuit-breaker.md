@@ -85,18 +85,23 @@ If two of these are true, the breaker should already have tripped.
 
 ## What to do after the stop
 
-* **Leave a journal entry** naming the loop and what you noticed. Future-you and
-  introspection both benefit. (`journal-as-breadcrumbs.md`)
-* **Log a chainlink `interest` issue** about the loop, even if you don't have time to
-  investigate now (`interest-backlog.md`). Every breaker trip is exactly the kind of
-  felt-friction the interest backlog exists to capture. The drain poller will surface
-  it for triage on its own cadence.
-* **If the structural cause is clear, encode the fix** via `try-harder.md` —
-  edit checkpoint.md, update a memory block, fix the conflicting file.
-* **If it's not clear, run five-whys** on the failure. The output is a structural
-  action item, not "be more careful next time."
+The breaker is a *signal* — it tells you to switch from action to inquiry, then to a
+structural fix. The fixes themselves live in `try-harder.md`. Cross-references rather
+than restatement:
+
 * **Communicate the stop to the human** if they're waiting on this task. Don't silently
   pivot — tell them you hit the breaker, what you saw, what you're doing instead.
+* **Leave a journal entry** naming the loop and what you noticed (`journal-as-breadcrumbs.md`).
+* **Pick the structural fix from `try-harder.md`.** That's the menu. Common picks after
+  a breaker trip:
+  * Item 4 — identify conflicting files (loops are often state disagreements)
+  * Item 5 — read your own behavior via `introspection`
+  * Item 6 — file a five-whys when the loop is recurring across sessions
+  * Item 7 — update the failing skill if a skill's guidance produced the loop
+* **If you don't yet know which `try-harder` move applies**, run `introspection` on
+  `logs/events.jsonl` to see the actual loop shape. Trust events > journal > blocks.
+* **Log a chainlink `interest` issue** if you can't act on the fix in this turn
+  (`interest-backlog.md`). The drain poller surfaces it on its own cadence.
 
 ## Composing with other patterns
 
