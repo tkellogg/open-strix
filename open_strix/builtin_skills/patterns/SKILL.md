@@ -31,5 +31,12 @@ Having problems that look like this?
 * No durable place to track what you've noticed, committed to, or finished — interest-backlog.md
 * "I should remember to look into X" / "that was weird but I don't have time now" — interest-backlog.md (log it, drain it later)
 
+## Two rules worth pulling forward
+
+These show up repeatedly in the sub-pages but are easy to miss if you only skim the index.
+
+* **The artifact of trying harder is a diff someone else can verify, not a resolution someone else has to trust.** If your "fix" is a commitment to do better, it dies the moment your turn ends. See `try-harder.md`.
+* **Journal entries should have handles, not prose.** `j_abc123` and `/tmp/rl.md` survive a context boundary; "I spawned a job and will check on it" doesn't. See `journal-as-breadcrumbs.md`.
+
 It's worth running a five-why's on your problem to see if some of this info applies.
 

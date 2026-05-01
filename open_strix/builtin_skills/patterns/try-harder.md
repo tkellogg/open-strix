@@ -32,6 +32,11 @@ Memory blocks are rendered into your prompt every single turn. If you keep forge
 Test: would seeing this line in your prompt every turn make the next attempt go right?
 If yes, that's the edit.
 
+**But check item 7 first.** If the rule you're about to put in a block came from a skill
+that should have prevented this failure, the block is the wrong place — edit the skill
+that's the proximate cause. Blocks bloat fast; skills are versioned and shareable. See
+item 7 below.
+
 ### 2. Edit `~/checkpoint.md`
 
 `checkpoint.md` is returned as the result of every `journal` call (and `journal` is
@@ -111,9 +116,22 @@ the other side.
 
 This is the meta-move that produces the other moves on this page.
 
-### 7. Update the skill that's failing
+### 7. Update the skill that's failing (often the right move BEFORE editing a block)
 
-Skills are editable. If a skill's guidance led you wrong, edit the skill. Two caveats:
+Skills are editable. If a skill's guidance led you wrong — or its absence let you go
+wrong — **edit the skill before adding to a memory block.** This ordering matters:
+
+* Skills are versioned, shareable, and survive across humans and agents. A block edit
+  only helps the agent that already has that block.
+* Block bloat is a real failure mode. Adding a block paragraph for every recurring
+  miss produces ~600-line blocks that nobody reads end-to-end. The skill is the right
+  surface for "rule that should fire when shape X comes up."
+* If the skill is the *proximate cause* of the failure (it told you to do X, and X
+  was wrong; or it was silent on a case it should have covered), the skill is what
+  has to change. Putting the rule in a block on top of a wrong skill is paving over
+  the cause.
+
+Two caveats on the edit itself:
 
 * Don't edit `.open_strix_builtin_skills/` directly — those are upstream. PR the repo,
   or make a custom skill with overriding guidance.
