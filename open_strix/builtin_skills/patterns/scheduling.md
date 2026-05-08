@@ -114,6 +114,17 @@ The interesting power often comes from combinations:
   cheaply; if action requires fresh-agent context, the schedule fires from there.
   Usually overkill; usually the poller can directly emit a wake-up.
 
+* **One poller fire → N sequential agent turns (chain / fan-out).** A single
+  poller invocation can emit N lines on stdout; the scheduler queues each as its
+  own `AgentEvent`, so the agent runs N turns back-to-back, one per line. This is
+  the right shape any time you need to *drain a queue* — a backlog of owed
+  five-whys, an interest-backlog of captures, a batch of pending reviews.
+  One cron tick, one process spawn, N fresh turns. Sequential (not parallel),
+  collision-safe if each prompt says "pick the top open item" instead of
+  hard-coding ids. Keep N small (3-7) and gate on idle + queue-depth + refire
+  interval so the chain stays rare and useful. See
+  `pollers/design-patterns.md` "Fan-Out" for the implementation pattern.
+
 * **`shell async` waits → on completion, register an `add_schedule`.** Waited for the
   human to do X; now schedule the follow-up reminder.
 

@@ -41,6 +41,39 @@ Lines without a `prompt` field (or with an empty one) are silently dropped. No e
 
 If the poller has nothing actionable, output nothing to stdout. Zero lines = zero events. Don't emit `{"poller": "x", "prompt": "No new items"}` — that wastes an LLM call to process a non-event.
 
+### Fan-Out: Many Events From One Fire
+
+The "one line = one event" contract cuts both ways. **A single poller fire can emit N lines, and each becomes its own sequential agent turn.** The scheduler iterates `stdout.splitlines()` and queues each parsed event independently — so emitting 5 lines is exactly equivalent to the poller firing 5 times back-to-back, except cheaper (one cron tick, one process spawn) and atomic (the poller decides the batch as a unit).
+
+This is the right shape any time the agent needs to *drain a queue* or *process a batch*: one cron tick produces a chain of N agent turns, each handling one item.
+
+```python
+# Drain up to N items from a queue file in one fire
+items = read_open_items()[:CHAIN_SIZE]
+for item in items:
+    event = {
+        "poller": os.environ.get("POLLER_NAME"),
+        "prompt": (
+            f"Process queue item {item['id']}: {item['title']}\n\n"
+            f"Pull the TOP open `[ ]` item from the queue file and work it. "
+            f"If a prior chain tick already claimed it, pick the next open item. "
+            f"Original context: {item['context']}"
+        ),
+    }
+    print(json.dumps(event))
+```
+
+**Why each prompt says "pick the top open item" instead of hard-coding the item id:**
+The chain ticks run *sequentially*, but they run in *fresh agent turns* — each turn re-reads the queue file. By the time tick 2 starts, tick 1 has already mutated the file (closed an item, added a note). Hard-coding tick 2's payload at fan-out time would race with tick 1's mutations. Letting each tick re-resolve "top open" against the current file state is collision-safe by construction.
+
+**Anti-pattern: parallel fan-out.** The scheduler queues events sequentially, not in parallel. Don't emit 50 lines hoping for parallel processing — you'll get 50 agent turns in a row, and turns 30-50 will likely starve under context-window or rate-limit pressure. Pick a small N (3-7) and rely on the next cron tick to drain more.
+
+**When to use fan-out vs separate pollers:**
+- **Fan-out (one poller, N events):** items share the same source-of-truth (a queue file, a backlog table) and the same processing protocol. The poller is the *batch-decider*; the agent is the *per-item-worker*.
+- **Separate pollers:** items come from different services (Bluesky vs GitHub), have different cadences, or have different filtering rules. Don't multiplex independent streams through one poller just because you can.
+
+**Gating considerations:** fan-out pollers compound noise if they fire too often. A 5-event fan-out at 5-minute cadence is 60 events/hour. Use idle gates (skip if user is active), refire gates (don't fan out twice within 12h), and queue-depth gates (don't fan out unless the queue has ≥3 items) to keep the chain rare and useful.
+
 ## State Management
 
 Pollers are stateless processes that run on a cron schedule. Between runs, they need to remember what they've already seen. This is entirely the poller's responsibility — the scheduler doesn't track state for you.
