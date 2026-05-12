@@ -362,8 +362,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         box-shadow: 0 12px 28px rgba(44, 54, 64, 0.08);
         display: flex;
         flex-direction: column;
-        flex: 1 1 0;
-        min-height: 14rem;
+        flex: 0 0 auto;
       }}
 
       .ui-card.is-minimized {{
@@ -430,8 +429,6 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }}
 
       .ui-body {{
-        flex: 1 1 auto;
-        min-height: 14rem;
         background: var(--paper-strong);
         display: flex;
         flex-direction: column;
@@ -439,8 +436,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       .ui-frame-slot {{
         width: 100%;
-        flex: 1 1 auto;
-        min-height: 20rem;
+        height: 600px;
       }}
 
       .ui-frame {{

@@ -350,29 +350,32 @@ def test_minimize_collapses_card_via_is_minimized_class(tmp_path: Path) -> None:
     assert 'card.classList.toggle("is-minimized", widget.minimized)' in page
 
 
-def test_plugin_card_fills_vertical_space(tmp_path: Path) -> None:
-    """Open plugin cards must consume their vertical space, not stop at 20rem.
+def test_plugin_card_has_fixed_600px_frame(tmp_path: Path) -> None:
+    """Open plugin cards must have a fixed 600px iframe area.
 
-    Regression: 2026-05-12 — chainlink-ui plugin only used ~20rem of the strip
-    height, leaving large empty space below the iframe. Root cause was
-    `.ui-frame-slot { height: 20rem }` (fixed) + `.ui-card` not being a flex
-    column. Fix: card is flex column with `flex: 1 1 0`, body grows, frame-slot
-    grows with `min-height: 20rem` as the floor.
+    History:
+    - 2026-05-12a — `.ui-frame-slot { height: 20rem }` left huge empty space.
+    - 2026-05-12b — switched card to `flex: 1 1 0` so it stretched the whole
+      strip (still wrong; iframe stayed at 150px because its height: 100% chain
+      didn't resolve through unbounded flex parents).
+    - 2026-05-12c (this) — fix the height at the frame slot itself: 600px.
+      Card is `flex: 0 0 auto` so it takes its natural height (titlebar + 600px
+      slot). iframe `height: 100%` resolves against the fixed slot height.
     """
     strix = DummyStrix(tmp_path / "atlas")
 
     page = _render_web_ui_page(strix)
 
-    # The old fixed-height rule on the frame slot must be gone.
-    # The fixed-height rule must be gone; only 'min-height: 20rem' may remain.
-    assert page.count("height: 20rem") == page.count("min-height: 20rem")
-    # The frame slot now grows to fill the body, with 20rem as the floor.
-    assert "min-height: 20rem;" in page
-    # The strip content must stretch to fill the strip height so cards have room.
+    # The frame slot has a fixed 600px height so the iframe can resolve 100%.
+    assert "height: 600px;" in page
+    # The old 20rem rule (both fixed and min-height variants) must be gone.
+    assert "20rem" not in page or "min-height: 20rem" not in page  # safety: no 20rem rule on slot
+    assert "height: 20rem" not in page
+    # The card does NOT grow to fill the strip — it takes its natural height.
+    assert "flex: 1 1 0;" not in page
+    # The strip content still stretches to fill the strip vertically.
     assert "min-height: 100%;" in page
-    # Cards grow within the strip-content (flex: 1 1 0 distributes height).
-    assert "flex: 1 1 0;" in page
-    # When minimized, cards shrink to titlebar-only (flex: 0 0 auto overrides growth).
+    # Card uses flex: 0 0 auto so it sizes to content (titlebar + slot).
     assert "flex: 0 0 auto;" in page
 
 
