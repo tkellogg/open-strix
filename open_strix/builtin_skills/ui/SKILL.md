@@ -50,6 +50,42 @@ Two safe strategies:
 
 The iframe sandbox is `allow-same-origin` only — **no `allow-scripts`**. Anything that needs JS won't run. Use static HTML, CSS, and inline SVG. If you need interactivity, you need a UI plugin.
 
+## Embedding images
+
+HTML messages render via `srcdoc` — there is **no base URL**, so relative paths like `img/foo.png` won't resolve. The harness serves attachments at `/files/{path}`, gated by the message's `attachment_paths` list (see `resolve_web_shared_file`). There is **no `/state/` route** — `<img src="/state/foo.png">` will 404 silently and render as a broken image.
+
+**Two things must both be true** for an inline image to render:
+
+1. The file is passed in `attachment_paths`, e.g. `attachment_paths=["state/charts/run-42.png"]`.
+2. The `<img src>` points to `/files/<same-path>`, e.g. `<img src="/files/state/charts/run-42.png">`.
+
+Working example:
+
+```python
+send_message(
+    format="html",
+    text='<p>Latency over the last hour:</p><img src="/files/state/charts/run-42.png" style="max-width:100%">',
+    attachment_paths=["state/charts/run-42.png"],
+)
+```
+
+**Allowed `src` shapes:**
+
+| Shape | Notes |
+| --- | --- |
+| `/files/<path>` where `<path>` is in `attachment_paths` | The standard case. Path is relative to agent home. |
+| Inline `<svg>...</svg>` | Always works, no attachment needed. Preferred for diagrams. |
+| `data:image/...;base64,...` | Works, but bloats message storage. Use for tiny icons only. |
+| `https://<external>` | Works (iframe is `allow-same-origin` only, not network-restricted). External hotlinks are fragile though — prefer attachments for anything that should outlive the source. |
+
+**Forbidden / broken:**
+
+- `src="/state/foo.png"` — no such route on the harness.
+- `src="state/foo.png"` (relative) — `srcdoc` has no base URL, won't resolve.
+- `src="/files/foo.png"` when `foo.png` is not in this message's `attachment_paths` — server returns 404 even if the file exists on disk.
+
+**Pre-send self-check:** for every `<img ` in your HTML body, the `src` is either inline `<svg>`, `data:`, fully-qualified `https://`, OR `/files/<path>` AND that exact path appears in `attachment_paths`. If not, fix before sending.
+
 ## Sizing
 
 The harness auto-resizes the iframe height to fit content via `ResizeObserver`. Do *not* try to fix a height. Width is capped at `min(42rem, 92%)`.
