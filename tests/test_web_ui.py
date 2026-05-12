@@ -350,26 +350,31 @@ def test_minimize_collapses_card_via_is_minimized_class(tmp_path: Path) -> None:
     assert 'card.classList.toggle("is-minimized", widget.minimized)' in page
 
 
-def test_plugin_card_has_fixed_600px_frame(tmp_path: Path) -> None:
-    """Open plugin cards must have a fixed 600px iframe area.
+def test_plugin_card_has_fixed_frame_and_hides_placeholder_when_running(tmp_path: Path) -> None:
+    """Open plugin cards must have a fixed iframe area and the placeholder must
+    actually disappear when the iframe is showing.
 
     History:
     - 2026-05-12a — `.ui-frame-slot { height: 20rem }` left huge empty space.
     - 2026-05-12b — switched card to `flex: 1 1 0` so it stretched the whole
       strip (still wrong; iframe stayed at 150px because its height: 100% chain
       didn't resolve through unbounded flex parents).
-    - 2026-05-12c (this) — fix the height at the frame slot itself: 600px.
-      Card is `flex: 0 0 auto` so it takes its natural height (titlebar + 600px
-      slot). iframe `height: 100%` resolves against the fixed slot height.
+    - 2026-05-12c — pinned the slot at 600px. Card sized correctly but the
+      `.ui-placeholder` sibling stayed visible (its `display: grid` rule
+      overrides the `[hidden]` attribute) and ate ~128px below the iframe.
+    - 2026-05-12d (this) — slot pinned at 260px (Tim asked for ~half of 600).
+      Added explicit `[hidden]` overrides on both `.ui-frame-slot` and
+      `.ui-placeholder` so the JS `widget.placeholder.hidden = running` /
+      `widget.frameSlot.hidden = !running` actually collapse them.
     """
     strix = DummyStrix(tmp_path / "atlas")
 
     page = _render_web_ui_page(strix)
 
-    # The frame slot has a fixed 600px height so the iframe can resolve 100%.
-    assert "height: 600px;" in page
-    # The old 20rem rule (both fixed and min-height variants) must be gone.
-    assert "20rem" not in page or "min-height: 20rem" not in page  # safety: no 20rem rule on slot
+    # The frame slot has a fixed height so the iframe can resolve 100%.
+    assert "height: 260px;" in page
+    # The old 600px and 20rem rules must be gone.
+    assert "height: 600px;" not in page
     assert "height: 20rem" not in page
     # The card does NOT grow to fill the strip — it takes its natural height.
     assert "flex: 1 1 0;" not in page
@@ -377,6 +382,10 @@ def test_plugin_card_has_fixed_600px_frame(tmp_path: Path) -> None:
     assert "min-height: 100%;" in page
     # Card uses flex: 0 0 auto so it sizes to content (titlebar + slot).
     assert "flex: 0 0 auto;" in page
+    # The `hidden` attribute on placeholder/slot must actually hide them —
+    # without these rules the `display: grid` on `.ui-placeholder` wins.
+    assert ".ui-placeholder[hidden]" in page
+    assert ".ui-frame-slot[hidden]" in page
 
 
 def test_plugin_titlebar_has_reload_button(tmp_path: Path) -> None:

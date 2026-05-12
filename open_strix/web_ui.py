@@ -436,7 +436,11 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       .ui-frame-slot {{
         width: 100%;
-        height: 600px;
+        height: 260px;
+      }}
+
+      .ui-frame-slot[hidden] {{
+        display: none;
       }}
 
       .ui-frame {{
@@ -455,6 +459,10 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         color: var(--muted);
         font-size: 0.88rem;
         text-align: center;
+      }}
+
+      .ui-placeholder[hidden] {{
+        display: none;
       }}
 
       .ui-hamburger {{
