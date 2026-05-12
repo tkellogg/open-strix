@@ -581,6 +581,13 @@ def test_render_page_includes_ui_plugin_link_navigation(tmp_path: Path) -> None:
     assert "hashchange" in html
     assert '"#/ui/"' in html
 
+    # parseUiPluginHref must unwrap a leading "#/ui/" BEFORE URL normalization,
+    # otherwise `new URL("#/ui/...", origin)` collapses pathname to "/" and
+    # the recombined path becomes "/#/ui/..." which fails every prefix check.
+    # Regression guard for the 2026-05-12 hash-form bug Tim reported at 14:14 UTC.
+    assert 'path.startsWith("#/ui/")' in html
+    assert 'path.indexOf("#/ui/")' in html
+
     # Markdown link rewriting must explicitly skip /ui/ links so they stay
     # in-tab and get claimed by the click delegate.
     assert "parseUiPluginHref(href)" in html

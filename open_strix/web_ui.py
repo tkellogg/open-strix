@@ -1281,17 +1281,30 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         //   /ui/<name>/<rest>          (markdown link inside chat DOM)
         //   #/ui/<name>/<rest>         (hash-routed; usable from sandboxed HTML iframes)
         //   http(s)://host/ui/<name>/<rest>
+        //   http(s)://host/#/ui/<name>/<rest>
         if (!href) return null;
         let path = String(href);
-        try {{
-          const u = new URL(path, window.location.origin);
-          if (u.origin !== window.location.origin) return null;
-          path = u.pathname + u.search + u.hash;
-        }} catch (e) {{
-          // not a parseable URL — fall through and try direct prefix match
-        }}
+        // Hash-only forms must be unwrapped BEFORE URL parsing — otherwise
+        // `new URL("#/ui/...", origin)` collapses to pathname="/" + hash, and
+        // the recombined path becomes "/#/ui/..." which no prefix below catches.
         if (path.startsWith("#/ui/")) {{
           path = path.slice(1);
+        }} else {{
+          try {{
+            const u = new URL(path, window.location.origin);
+            if (u.origin !== window.location.origin) return null;
+            path = u.pathname + u.search + u.hash;
+          }} catch (e) {{
+            // not a parseable URL — fall through and try direct prefix match
+          }}
+          // After URL normalization, a hash-routed absolute URL looks like
+          // "/path#/ui/..." — claim it via the canonical hash form.
+          if (!path.startsWith("/ui/")) {{
+            const hashIdx = path.indexOf("#/ui/");
+            if (hashIdx !== -1) {{
+              path = path.slice(hashIdx + 1);
+            }}
+          }}
         }}
         if (!path.startsWith("/ui/")) return null;
         const rest = path.slice(4);
