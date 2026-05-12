@@ -311,7 +311,121 @@ def test_web_ui_renders_html_in_iframe(tmp_path: Path) -> None:
     assert 'document.createElement("iframe")' in page
     assert 'frame.setAttribute("sandbox", "allow-same-origin");' in page
     assert 'frame.setAttribute("srcdoc", message.content || "");' in page
-    assert "allow-scripts" not in page
+    html_message_start = page.index('if (message.format === "html")')
+    html_message_end = page.index("body.appendChild(frame);", html_message_start)
+    html_message_block = page[html_message_start:html_message_end]
+    assert "allow-scripts" not in html_message_block
+
+
+def test_web_ui_page_includes_ui_plugin_shell(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert '<div class="ui-strip" id="ui-strip"' in page
+    assert 'class="ui-hamburger" id="ui-hamburger"' in page
+    assert 'fetch("/api/uis"' in page
+
+
+def test_ui_strip_grows_to_fill_available_width(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # Old fixed-width rule must be gone.
+    assert "flex: 0 0 320px;" not in page
+    # New growable rule must be present (min-width keeps it readable, max-width caps it).
+    assert "min-width: 320px;" in page
+    assert "max-width: 600px;" in page
+
+
+def test_minimize_collapses_card_via_is_minimized_class(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # CSS rule that actually hides the body when minimized.
+    assert ".ui-card.is-minimized .ui-body" in page
+    # JS toggles the class on the card element.
+    assert 'card.classList.toggle("is-minimized", widget.minimized)' in page
+
+
+def test_plugin_card_has_fixed_frame_and_hides_placeholder_when_running(tmp_path: Path) -> None:
+    """Open plugin cards must have a fixed iframe area and the placeholder must
+    actually disappear when the iframe is showing.
+
+    History:
+    - 2026-05-12a — `.ui-frame-slot { height: 20rem }` left huge empty space.
+    - 2026-05-12b — switched card to `flex: 1 1 0` so it stretched the whole
+      strip (still wrong; iframe stayed at 150px because its height: 100% chain
+      didn't resolve through unbounded flex parents).
+    - 2026-05-12c — pinned the slot at 600px. Card sized correctly but the
+      `.ui-placeholder` sibling stayed visible (its `display: grid` rule
+      overrides the `[hidden]` attribute) and ate ~128px below the iframe.
+    - 2026-05-12d (this) — slot pinned at 260px (Tim asked for ~half of 600).
+      Added explicit `[hidden]` overrides on both `.ui-frame-slot` and
+      `.ui-placeholder` so the JS `widget.placeholder.hidden = running` /
+      `widget.frameSlot.hidden = !running` actually collapse them.
+    """
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # The frame slot has a fixed height so the iframe can resolve 100%.
+    assert "height: 260px;" in page
+    # The old 600px and 20rem rules must be gone.
+    assert "height: 600px;" not in page
+    assert "height: 20rem" not in page
+    # The card does NOT grow to fill the strip — it takes its natural height.
+    assert "flex: 1 1 0;" not in page
+    # The strip content still stretches to fill the strip vertically.
+    assert "min-height: 100%;" in page
+    # Card uses flex: 0 0 auto so it sizes to content (titlebar + slot).
+    assert "flex: 0 0 auto;" in page
+    # The `hidden` attribute on placeholder/slot must actually hide them —
+    # without these rules the `display: grid` on `.ui-placeholder` wins.
+    assert ".ui-placeholder[hidden]" in page
+    assert ".ui-frame-slot[hidden]" in page
+
+
+def test_plugin_titlebar_has_reload_button(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # A reload button is created alongside minimize and maximize.
+    assert 'reload.title = "Reload"' in page
+    # The reload click handler re-assigns iframe.src to force a reload.
+    assert "widget.iframe.src = widget.iframe.src" in page
+    # The reload button is in the actions row.
+    assert "actions.append(reload, minimize, maximize)" in page
+
+
+def test_iframe_height_uses_max_of_html_and_body_scroll_height(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert "Math.max(" in page
+    assert "documentElement" in page
+    assert "body.scrollHeight" in page
+
+
+def test_iframe_uses_resize_observer_for_async_layout(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert "ResizeObserver" in page
+    assert ".observe(" in page
+
+
+def test_iframe_resize_observer_is_optional(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert 'typeof ResizeObserver !== "undefined"' in page
 
 
 @pytest.mark.asyncio
@@ -445,3 +559,35 @@ async def test_health_includes_turn_state(tmp_path: Path) -> None:
     body = json.loads(response.text)
     assert "is_processing" in body
     assert "turn_elapsed_seconds" in body
+
+
+def test_render_page_includes_ui_plugin_link_navigation(tmp_path: Path) -> None:
+    """Markdown click delegation, HTML iframe interception, and hash routing
+    must all be wired up in the rendered page. This is the regression guard
+    for the link-to-plugin nav feature (2026-05-12)."""
+    strix = DummyStrix(tmp_path / "atlas")
+    html = _render_web_ui_page(strix)
+
+    # Core helpers exist.
+    assert "function parseUiPluginHref(" in html
+    assert "function routeUiPluginNav(" in html
+    assert "function attachUiPluginLinkInterceptor(" in html
+
+    # Two attach paths: parent chat container, and inside HTML message iframes.
+    assert "attachUiPluginLinkInterceptor(messagesEl)" in html
+    assert "attachUiPluginLinkInterceptor(doc)" in html
+
+    # Hash-routed deep links (the HTML-message escape that doesn't need scripts).
+    assert "hashchange" in html
+    assert '"#/ui/"' in html
+
+    # parseUiPluginHref must unwrap a leading "#/ui/" BEFORE URL normalization,
+    # otherwise `new URL("#/ui/...", origin)` collapses pathname to "/" and
+    # the recombined path becomes "/#/ui/..." which fails every prefix check.
+    # Regression guard for the 2026-05-12 hash-form bug Tim reported at 14:14 UTC.
+    assert 'path.startsWith("#/ui/")' in html
+    assert 'path.indexOf("#/ui/")' in html
+
+    # Markdown link rewriting must explicitly skip /ui/ links so they stay
+    # in-tab and get claimed by the click delegate.
+    assert "parseUiPluginHref(href)" in html

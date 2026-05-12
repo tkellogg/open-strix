@@ -1471,6 +1471,16 @@ class ToolsMixin:
             names = [p.name for p in pollers]
             return f"Reloaded. {len(pollers)} poller(s) registered: {', '.join(names)}"
 
+        @tool("reload_uis")
+        async def reload_uis() -> str:
+            """Reload all web UI plugins from skills/*/ui.json files. Call this after installing or updating a skill that includes UIs."""
+            plugins = await self.ui_plugins.reload()
+            self.log_event("tool_call", tool="reload_uis", count=len(plugins))
+            if not plugins:
+                return "Reloaded. No UIs found."
+            names = [plugin.name for plugin in plugins]
+            return f"Reloaded. {len(plugins)} UI(s) registered: {', '.join(names)}"
+
         @tool("lookup")
         def lookup(query: str) -> str:
             """Look up a Discord user or channel by name or ID.  Returns matching entries with their IDs, mention format, and type.  Use this when you need to find a channel_id or user mention format."""
@@ -1665,6 +1675,7 @@ class ToolsMixin:
             add_schedule,
             remove_schedule,
             reload_pollers,
+            reload_uis,
             climb_register,
             climb_unregister,
             climb_status,
