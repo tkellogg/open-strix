@@ -314,6 +314,33 @@ def test_web_ui_renders_html_in_iframe(tmp_path: Path) -> None:
     assert "allow-scripts" not in page
 
 
+def test_iframe_height_uses_max_of_html_and_body_scroll_height(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert "Math.max(" in page
+    assert "documentElement" in page
+    assert "body.scrollHeight" in page
+
+
+def test_iframe_uses_resize_observer_for_async_layout(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert "ResizeObserver" in page
+    assert ".observe(" in page
+
+
+def test_iframe_resize_observer_is_optional(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert 'typeof ResizeObserver !== "undefined"' in page
+
+
 @pytest.mark.asyncio
 async def test_web_ui_uses_configured_display_name(tmp_path: Path) -> None:
     strix = DummyStrix(tmp_path / "atlas")

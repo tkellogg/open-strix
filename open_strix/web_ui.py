@@ -1271,14 +1271,35 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
             frame.style.border = "none";
             frame.style.width = "100%";
             frame.style.minHeight = "120px";
-            frame.addEventListener("load", () => {{
+            const resize = () => {{
               try {{
                 const doc = frame.contentDocument;
-                if (doc && doc.body) {{
-                  frame.style.height = doc.body.scrollHeight + "px";
+                if (!doc || !doc.body) return;
+                const html = doc.documentElement;
+                const next = Math.max(
+                  html ? html.scrollHeight : 0,
+                  doc.body.scrollHeight,
+                );
+                if (next > 0) {{
+                  frame.style.height = next + "px";
                 }}
               }} catch (e) {{
                 // Cross-origin or sandbox lockdown: keep min height.
+              }}
+            }};
+            frame.addEventListener("load", () => {{
+              resize();
+              try {{
+                const doc = frame.contentDocument;
+                if (doc && doc.documentElement && typeof ResizeObserver !== "undefined") {{
+                  const ro = new ResizeObserver(() => resize());
+                  ro.observe(doc.documentElement);
+                  if (doc.body) {{
+                    ro.observe(doc.body);
+                  }}
+                }}
+              }} catch (e) {{
+                // Sandbox or older browser without ResizeObserver: keep single measurement.
               }}
             }});
             body.appendChild(frame);
