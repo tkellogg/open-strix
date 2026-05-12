@@ -341,7 +341,13 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         display: none;
       }}
 
-      .ui-strip-content,
+      .ui-strip-content {{
+        display: flex;
+        flex-direction: column;
+        gap: 0.8rem;
+        min-height: 100%;
+      }}
+
       .ui-mobile-list {{
         display: flex;
         flex-direction: column;
@@ -354,6 +360,15 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         border-radius: 0.7rem;
         background: rgba(255, 250, 241, 0.9);
         box-shadow: 0 12px 28px rgba(44, 54, 64, 0.08);
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 0;
+        min-height: 14rem;
+      }}
+
+      .ui-card.is-minimized {{
+        flex: 0 0 auto;
+        min-height: 0;
       }}
 
       .ui-card.is-minimized .ui-body {{
@@ -415,13 +430,17 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }}
 
       .ui-body {{
+        flex: 1 1 auto;
         min-height: 14rem;
         background: var(--paper-strong);
+        display: flex;
+        flex-direction: column;
       }}
 
       .ui-frame-slot {{
         width: 100%;
-        height: 20rem;
+        flex: 1 1 auto;
+        min-height: 20rem;
       }}
 
       .ui-frame {{

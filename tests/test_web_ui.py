@@ -350,6 +350,32 @@ def test_minimize_collapses_card_via_is_minimized_class(tmp_path: Path) -> None:
     assert 'card.classList.toggle("is-minimized", widget.minimized)' in page
 
 
+def test_plugin_card_fills_vertical_space(tmp_path: Path) -> None:
+    """Open plugin cards must consume their vertical space, not stop at 20rem.
+
+    Regression: 2026-05-12 — chainlink-ui plugin only used ~20rem of the strip
+    height, leaving large empty space below the iframe. Root cause was
+    `.ui-frame-slot { height: 20rem }` (fixed) + `.ui-card` not being a flex
+    column. Fix: card is flex column with `flex: 1 1 0`, body grows, frame-slot
+    grows with `min-height: 20rem` as the floor.
+    """
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # The old fixed-height rule on the frame slot must be gone.
+    # The fixed-height rule must be gone; only 'min-height: 20rem' may remain.
+    assert page.count("height: 20rem") == page.count("min-height: 20rem")
+    # The frame slot now grows to fill the body, with 20rem as the floor.
+    assert "min-height: 20rem;" in page
+    # The strip content must stretch to fill the strip height so cards have room.
+    assert "min-height: 100%;" in page
+    # Cards grow within the strip-content (flex: 1 1 0 distributes height).
+    assert "flex: 1 1 0;" in page
+    # When minimized, cards shrink to titlebar-only (flex: 0 0 auto overrides growth).
+    assert "flex: 0 0 auto;" in page
+
+
 def test_plugin_titlebar_has_reload_button(tmp_path: Path) -> None:
     strix = DummyStrix(tmp_path / "atlas")
 
