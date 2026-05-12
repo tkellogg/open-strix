@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 from uuid import uuid4
 
-from aiohttp import web
+from aiohttp import ClientError, ClientSession, web
 from aiohttp.web_request import FileField
 
 from .models import AgentEvent
@@ -30,6 +30,16 @@ WEB_UI_CHANNEL_NAME = "Local Web"
 WEB_UI_AUTHOR = "local_user"
 WEB_UI_AUTHOR_ID = "local-web-user"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".heic", ".svg"}
+HOP_BY_HOP_HEADERS = {
+    "connection",
+    "keep-alive",
+    "transfer-encoding",
+    "upgrade",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+}
 
 
 def _is_inline_image(path_text: str) -> bool:
@@ -296,6 +306,194 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       body {{
         padding: 1rem;
+      }}
+
+      .app-frame {{
+        height: 100%;
+      }}
+
+      .app-frame.has-uis {{
+        display: flex;
+        align-items: stretch;
+        justify-content: center;
+        gap: 1rem;
+      }}
+
+      .app-frame.has-uis .shell {{
+        flex: 1 1 880px;
+        margin: 0;
+      }}
+
+      .ui-strip {{
+        flex: 0 0 320px;
+        width: 320px;
+        height: calc(100vh - 2rem);
+        overflow-y: auto;
+        padding-right: 0.1rem;
+      }}
+
+      .ui-strip[hidden],
+      .ui-hamburger[hidden],
+      .ui-overlay[hidden],
+      .ui-modal[hidden] {{
+        display: none;
+      }}
+
+      .ui-strip-content,
+      .ui-mobile-list {{
+        display: flex;
+        flex-direction: column;
+        gap: 0.8rem;
+      }}
+
+      .ui-card {{
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 0.7rem;
+        background: rgba(255, 250, 241, 0.9);
+        box-shadow: 0 12px 28px rgba(44, 54, 64, 0.08);
+      }}
+
+      .ui-titlebar {{
+        min-height: 2.4rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.45rem 0.55rem 0.45rem 0.75rem;
+        background: #ecdfc6;
+        border-bottom: 1px solid var(--line);
+      }}
+
+      .ui-title {{
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 0.86rem;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }}
+
+      .ui-actions {{
+        display: inline-flex;
+        gap: 0.35rem;
+      }}
+
+      .ui-tool-button,
+      .ui-hamburger,
+      .ui-close {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.8rem;
+        height: 1.8rem;
+        padding: 0;
+        border: 1px solid rgba(30, 36, 48, 0.14);
+        border-radius: 0.45rem;
+        background: rgba(255, 250, 241, 0.76);
+        color: var(--ink);
+        line-height: 1;
+      }}
+
+      .ui-tool-button:hover,
+      .ui-tool-button:focus-visible,
+      .ui-hamburger:hover,
+      .ui-hamburger:focus-visible,
+      .ui-close:hover,
+      .ui-close:focus-visible,
+      .ui-tool-button.active {{
+        background: var(--accent);
+        border-color: var(--accent);
+        color: white;
+        outline: none;
+      }}
+
+      .ui-body {{
+        min-height: 14rem;
+        background: var(--paper-strong);
+      }}
+
+      .ui-frame-slot {{
+        width: 100%;
+        height: 20rem;
+      }}
+
+      .ui-frame {{
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: white;
+      }}
+
+      .ui-placeholder {{
+        min-height: 8rem;
+        display: grid;
+        place-items: center;
+        padding: 1rem;
+        color: var(--muted);
+        font-size: 0.88rem;
+        text-align: center;
+      }}
+
+      .ui-hamburger {{
+        flex: 0 0 auto;
+      }}
+
+      .ui-overlay,
+      .ui-modal {{
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: rgba(30, 36, 48, 0.42);
+        backdrop-filter: blur(5px);
+      }}
+
+      .ui-overlay-panel {{
+        width: 100vw;
+        height: 100vh;
+        overflow-y: auto;
+        padding: 1rem;
+        background: var(--paper);
+      }}
+
+      .ui-overlay-head,
+      .ui-modal-head {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 0.8rem;
+      }}
+
+      .ui-overlay-title,
+      .ui-modal-title {{
+        margin: 0;
+        font-size: 1rem;
+      }}
+
+      .ui-modal-panel {{
+        width: 90vw;
+        height: 90vh;
+        margin: 5vh auto;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 0.85rem;
+        background: var(--paper-strong);
+        box-shadow: var(--shadow);
+      }}
+
+      .ui-modal-head {{
+        margin: 0;
+        padding: 0.6rem 0.7rem 0.6rem 1rem;
+        background: #ecdfc6;
+        border-bottom: 1px solid var(--line);
+      }}
+
+      .ui-modal-body {{
+        min-height: 0;
       }}
 
       .shell {{
@@ -761,6 +959,10 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           padding: 0;
         }}
 
+        .app-frame {{
+          height: 100vh;
+        }}
+
         .shell {{
           height: 100vh;
           border-radius: 0;
@@ -779,14 +981,39 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           max-width: 100%;
         }}
       }}
+
+      @media (max-width: 899px) {{
+        .app-frame.has-uis {{
+          display: block;
+        }}
+
+        .ui-strip {{
+          display: none;
+        }}
+
+        .ui-hamburger:not([hidden]) {{
+          display: inline-flex;
+        }}
+      }}
+
+      @media (min-width: 900px) {{
+        .ui-hamburger {{
+          display: none;
+        }}
+      }}
     </style>
   </head>
   <body>
-    <main class="shell">
+    <div class="app-frame" id="app-frame">
+      <div class="ui-strip" id="ui-strip" aria-label="UI plugins" hidden>
+        <div class="ui-strip-content" id="ui-strip-content"></div>
+      </div>
+      <main class="shell">
       <header class="header">
         <h1 class="title">{agent_name}</h1>
         <nav class="header-links">
           <a href="/ops" title="Live ops dashboard">Ops</a>
+          <button class="ui-hamburger" id="ui-hamburger" type="button" aria-label="Open UI plugins" title="Open UI plugins" hidden>☰</button>
         </nav>
       </header>
 
@@ -815,7 +1042,28 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           <div class="footer-note">Uploads stay inside the agent home and are shared only when attached in this chat.</div>
         </form>
       </section>
-    </main>
+      </main>
+    </div>
+
+    <div class="ui-overlay" id="ui-mobile-overlay" hidden>
+      <div class="ui-overlay-panel">
+        <div class="ui-overlay-head">
+          <h2 class="ui-overlay-title">UI plugins</h2>
+          <button class="ui-close" id="ui-mobile-close" type="button" aria-label="Close UI plugins" title="Close">×</button>
+        </div>
+        <div class="ui-mobile-list" id="ui-mobile-list"></div>
+      </div>
+    </div>
+
+    <div class="ui-modal" id="ui-modal" hidden>
+      <div class="ui-modal-panel">
+        <div class="ui-modal-head">
+          <h2 class="ui-modal-title" id="ui-modal-title"></h2>
+          <button class="ui-close" id="ui-modal-close" type="button" aria-label="Close plugin" title="Close">×</button>
+        </div>
+        <div class="ui-modal-body" id="ui-modal-body"></div>
+      </div>
+    </div>
 
     <script>
       const AGENT_NAME = {agent_name_json};
@@ -830,12 +1078,25 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       const shellJobsWidgetEl = document.getElementById("shell-jobs-widget");
       const shellJobsPillEl = document.getElementById("shell-jobs-pill");
       const shellJobsPanelEl = document.getElementById("shell-jobs-panel");
+      const appFrameEl = document.getElementById("app-frame");
+      const uiStripEl = document.getElementById("ui-strip");
+      const uiStripContentEl = document.getElementById("ui-strip-content");
+      const uiHamburgerEl = document.getElementById("ui-hamburger");
+      const uiMobileOverlayEl = document.getElementById("ui-mobile-overlay");
+      const uiMobileListEl = document.getElementById("ui-mobile-list");
+      const uiMobileCloseEl = document.getElementById("ui-mobile-close");
+      const uiModalEl = document.getElementById("ui-modal");
+      const uiModalBodyEl = document.getElementById("ui-modal-body");
+      const uiModalTitleEl = document.getElementById("ui-modal-title");
+      const uiModalCloseEl = document.getElementById("ui-modal-close");
 
       let shellJobsPanelOpen = false;
       let shellJobsExpandedId = null;
       let currentShellJobs = [];
       let shellJobOutputState = new Map();
       let pastedFiles = [];
+      let uiWidgets = new Map();
+      let maximizedWidget = null;
 
       function formatElapsed(sec) {{
         if (sec == null) return '';
@@ -855,6 +1116,188 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         }};
         return String(text ?? '').replace(/[&<>"']/g, (char) => escapes[char]);
       }}
+
+      function uiStatusText(plugin) {{
+        return plugin.status === "starting"
+          ? plugin.name + " is starting"
+          : plugin.name + " is not available";
+      }}
+
+      function createUiWidget(plugin) {{
+        const card = document.createElement("section");
+        card.className = "ui-card";
+        card.dataset.uiName = plugin.name;
+
+        const titlebar = document.createElement("div");
+        titlebar.className = "ui-titlebar";
+        const title = document.createElement("div");
+        title.className = "ui-title";
+        title.textContent = plugin.name;
+        const actions = document.createElement("div");
+        actions.className = "ui-actions";
+        const minimize = document.createElement("button");
+        minimize.className = "ui-tool-button";
+        minimize.type = "button";
+        minimize.title = "Minimize";
+        minimize.setAttribute("aria-label", "Minimize " + plugin.name);
+        minimize.textContent = "−";
+        const maximize = document.createElement("button");
+        maximize.className = "ui-tool-button";
+        maximize.type = "button";
+        maximize.title = "Maximize";
+        maximize.setAttribute("aria-label", "Maximize " + plugin.name);
+        maximize.textContent = "⛶";
+        actions.append(minimize, maximize);
+        titlebar.append(title, actions);
+
+        const body = document.createElement("div");
+        body.className = "ui-body";
+        const frameSlot = document.createElement("div");
+        frameSlot.className = "ui-frame-slot";
+        const placeholder = document.createElement("div");
+        placeholder.className = "ui-placeholder";
+        body.append(frameSlot, placeholder);
+        card.append(titlebar, body);
+
+        const widget = {{
+          name: plugin.name,
+          status: plugin.status,
+          card,
+          body,
+          frameSlot,
+          placeholder,
+          iframe: null,
+          minimized: false,
+          minimize,
+          maximize,
+        }};
+
+        minimize.addEventListener("click", () => {{
+          widget.minimized = !widget.minimized;
+          minimize.classList.toggle("active", widget.minimized);
+          minimize.setAttribute("aria-pressed", widget.minimized ? "true" : "false");
+          applyUiWidgetState(widget);
+        }});
+        maximize.addEventListener("click", () => openUiModal(widget));
+        return widget;
+      }}
+
+      function ensureUiIframe(widget) {{
+        if (widget.iframe) return;
+        const frame = document.createElement("iframe");
+        frame.className = "ui-frame";
+        frame.src = "/ui/" + encodeURIComponent(widget.name) + "/";
+        frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+        frame.title = widget.name;
+        widget.iframe = frame;
+        widget.frameSlot.appendChild(frame);
+      }}
+
+      function applyUiWidgetState(widget) {{
+        const running = widget.status === "running";
+        widget.placeholder.hidden = running;
+        widget.frameSlot.hidden = !running;
+        widget.placeholder.textContent = running ? "" : uiStatusText(widget);
+        if (running) {{
+          ensureUiIframe(widget);
+          if (maximizedWidget === widget) {{
+            widget.iframe.style.display = "block";
+          }} else {{
+            widget.iframe.style.display = widget.minimized ? "none" : "block";
+            if (widget.iframe.parentElement !== widget.frameSlot) {{
+              widget.frameSlot.appendChild(widget.iframe);
+            }}
+          }}
+        }}
+      }}
+
+      function renderUiPlugins(plugins) {{
+        const names = new Set((plugins || []).map((plugin) => plugin.name));
+        Array.from(uiWidgets.keys()).forEach((name) => {{
+          if (!names.has(name)) {{
+            const widget = uiWidgets.get(name);
+            if (maximizedWidget === widget) closeUiModal();
+            widget.card.remove();
+            uiWidgets.delete(name);
+          }}
+        }});
+
+        (plugins || []).forEach((plugin) => {{
+          let widget = uiWidgets.get(plugin.name);
+          if (!widget) {{
+            widget = createUiWidget(plugin);
+            uiWidgets.set(plugin.name, widget);
+            uiStripContentEl.appendChild(widget.card);
+          }}
+          widget.status = plugin.status;
+          if (!uiMobileOverlayEl.hidden && widget.card.parentElement !== uiMobileListEl) {{
+            uiMobileListEl.appendChild(widget.card);
+          }} else if (uiMobileOverlayEl.hidden && widget.card.parentElement !== uiStripContentEl) {{
+            uiStripContentEl.appendChild(widget.card);
+          }}
+          applyUiWidgetState(widget);
+        }});
+
+        const hasPlugins = uiWidgets.size > 0;
+        appFrameEl.classList.toggle("has-uis", hasPlugins);
+        uiStripEl.hidden = !hasPlugins;
+        uiHamburgerEl.hidden = !hasPlugins;
+        if (!hasPlugins) {{
+          closeMobileUiOverlay();
+        }}
+      }}
+
+      async function refreshUiPlugins() {{
+        try {{
+          const response = await fetch("/api/uis", {{ cache: "no-store" }});
+          if (!response.ok) throw new Error("UI plugin fetch failed");
+          renderUiPlugins(await response.json());
+        }} catch (error) {{
+          console.error("UI plugin refresh failed:", error);
+        }}
+      }}
+
+      function openUiModal(widget) {{
+        if (widget.status !== "running") return;
+        ensureUiIframe(widget);
+        maximizedWidget = widget;
+        uiModalTitleEl.textContent = widget.name;
+        uiModalEl.hidden = false;
+        widget.iframe.style.display = "block";
+        uiModalBodyEl.appendChild(widget.iframe);
+        widget.maximize.classList.add("active");
+        widget.maximize.setAttribute("aria-pressed", "true");
+      }}
+
+      function closeUiModal() {{
+        if (!maximizedWidget) {{
+          uiModalEl.hidden = true;
+          return;
+        }}
+        const widget = maximizedWidget;
+        maximizedWidget = null;
+        uiModalEl.hidden = true;
+        widget.maximize.classList.remove("active");
+        widget.maximize.setAttribute("aria-pressed", "false");
+        if (widget.iframe) {{
+          widget.frameSlot.appendChild(widget.iframe);
+        }}
+        applyUiWidgetState(widget);
+      }}
+
+      function openMobileUiOverlay() {{
+        uiMobileOverlayEl.hidden = false;
+        uiWidgets.forEach((widget) => uiMobileListEl.appendChild(widget.card));
+      }}
+
+      function closeMobileUiOverlay() {{
+        uiMobileOverlayEl.hidden = true;
+        uiWidgets.forEach((widget) => uiStripContentEl.appendChild(widget.card));
+      }}
+
+      uiHamburgerEl.addEventListener("click", openMobileUiOverlay);
+      uiMobileCloseEl.addEventListener("click", closeMobileUiOverlay);
+      uiModalCloseEl.addEventListener("click", closeUiModal);
 
       function pruneShellJobOutputState() {{
         const currentIds = new Set(currentShellJobs.map((job) => job.job_id));
@@ -1573,6 +2016,8 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         }}
       }});
 
+      refreshUiPlugins();
+      window.setInterval(refreshUiPlugins, 30000);
       refresh().then(() => {{ messagesEl.scrollTop = messagesEl.scrollHeight; }}).catch((error) => console.error(error));
       window.setInterval(() => {{
         refresh().catch((error) => console.error(error));
@@ -1589,6 +2034,13 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
 def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
     app = web.Application(client_max_size=25 * 1024**2)
+
+    async def ui_proxy_session(app: web.Application):
+        app["ui_proxy_session"] = ClientSession()
+        yield
+        await app["ui_proxy_session"].close()
+
+    app.cleanup_ctx.append(ui_proxy_session)
 
     async def index(_: web.Request) -> web.Response:
         return web.Response(text=_render_web_ui_page(strix), content_type="text/html")
@@ -1710,10 +2162,72 @@ def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response(build_dashboard_payload(strix, days))
 
+    async def list_uis(_: web.Request) -> web.Response:
+        manager = getattr(strix, "ui_plugins", None)
+        if manager is None:
+            return web.json_response([])
+        return web.json_response(manager.status())
+
+    async def proxy_ui(request: web.Request) -> web.StreamResponse:
+        # TODO(v2): websocket proxy support
+        manager = getattr(strix, "ui_plugins", None)
+        name = request.match_info["name"]
+        plugin = manager.find(name) if manager is not None else None
+        status = plugin.state if plugin is not None else "dead"
+        if plugin is None or plugin.state != "running":
+            return web.json_response(
+                {"error": "ui not available", "name": name, "status": status},
+                status=503,
+            )
+
+        path = request.match_info.get("path", "")
+        target_url = f"http://127.0.0.1:{plugin.port}/{quote(path, safe='/')}"
+        if request.query_string:
+            target_url = f"{target_url}?{request.query_string}"
+
+        request_headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
+        }
+        session = request.app["ui_proxy_session"]
+        request_body = request.content.iter_chunked(64 * 1024) if request.can_read_body else None
+        try:
+            async with session.request(
+                request.method,
+                target_url,
+                headers=request_headers,
+                data=request_body,
+                allow_redirects=False,
+            ) as proxied:
+                response_headers = {
+                    key: value
+                    for key, value in proxied.headers.items()
+                    if key.lower() not in HOP_BY_HOP_HEADERS
+                }
+                response = web.StreamResponse(
+                    status=proxied.status,
+                    reason=proxied.reason,
+                    headers=response_headers,
+                )
+                await response.prepare(request)
+                async for chunk in proxied.content.iter_chunked(64 * 1024):
+                    await response.write(chunk)
+                await response.write_eof()
+                return response
+        except ClientError as exc:
+            return web.json_response(
+                {"error": "ui proxy failed", "name": name, "detail": str(exc)},
+                status=502,
+            )
+
     app.router.add_get("/", index)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/messages", list_messages)
     app.router.add_post("/api/messages", post_message)
+    app.router.add_get("/api/uis", list_uis)
+    app.router.add_route("*", "/ui/{name}/", proxy_ui)
+    app.router.add_route("*", "/ui/{name}/{path:.*}", proxy_ui)
     app.router.add_get("/api/shell-jobs", list_shell_jobs)
     app.router.add_get("/api/shell-jobs/{job_id}", shell_job_detail)
     app.router.add_get("/files/{path:.*}", serve_file)

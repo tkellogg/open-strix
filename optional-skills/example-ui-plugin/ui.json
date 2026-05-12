@@ -1,0 +1,8 @@
+{
+  "uis": [
+    {
+      "name": "example-clock",
+      "command": "python server.py"
+    }
+  ]
+}

@@ -311,7 +311,20 @@ def test_web_ui_renders_html_in_iframe(tmp_path: Path) -> None:
     assert 'document.createElement("iframe")' in page
     assert 'frame.setAttribute("sandbox", "allow-same-origin");' in page
     assert 'frame.setAttribute("srcdoc", message.content || "");' in page
-    assert "allow-scripts" not in page
+    html_message_start = page.index('if (message.format === "html")')
+    html_message_end = page.index("body.appendChild(frame);", html_message_start)
+    html_message_block = page[html_message_start:html_message_end]
+    assert "allow-scripts" not in html_message_block
+
+
+def test_web_ui_page_includes_ui_plugin_shell(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert '<div class="ui-strip" id="ui-strip"' in page
+    assert 'class="ui-hamburger" id="ui-hamburger"' in page
+    assert 'fetch("/api/uis"' in page
 
 
 def test_iframe_height_uses_max_of_html_and_body_scroll_height(tmp_path: Path) -> None:

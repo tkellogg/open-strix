@@ -778,6 +778,12 @@ def _print_setup_walkthrough(home: Path) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="open-strix")
+    parser.add_argument(
+        "--home",
+        type=Path,
+        default=None,
+        help="Agent home directory for the default run command.",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     run_parser = subparsers.add_parser("run", help="Run the open-strix event loop.")
