@@ -350,6 +350,19 @@ def test_minimize_collapses_card_via_is_minimized_class(tmp_path: Path) -> None:
     assert 'card.classList.toggle("is-minimized", widget.minimized)' in page
 
 
+def test_plugin_titlebar_has_reload_button(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # A reload button is created alongside minimize and maximize.
+    assert 'reload.title = "Reload"' in page
+    # The reload click handler re-assigns iframe.src to force a reload.
+    assert "widget.iframe.src = widget.iframe.src" in page
+    # The reload button is in the actions row.
+    assert "actions.append(reload, minimize, maximize)" in page
+
+
 def test_iframe_height_uses_max_of_html_and_body_scroll_height(tmp_path: Path) -> None:
     strix = DummyStrix(tmp_path / "atlas")
 

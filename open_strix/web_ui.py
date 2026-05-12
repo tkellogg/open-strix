@@ -1141,6 +1141,12 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         title.textContent = plugin.name;
         const actions = document.createElement("div");
         actions.className = "ui-actions";
+        const reload = document.createElement("button");
+        reload.className = "ui-tool-button";
+        reload.type = "button";
+        reload.title = "Reload";
+        reload.setAttribute("aria-label", "Reload " + plugin.name);
+        reload.textContent = "⟳";
         const minimize = document.createElement("button");
         minimize.className = "ui-tool-button";
         minimize.type = "button";
@@ -1153,7 +1159,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         maximize.title = "Maximize";
         maximize.setAttribute("aria-label", "Maximize " + plugin.name);
         maximize.textContent = "⛶";
-        actions.append(minimize, maximize);
+        actions.append(reload, minimize, maximize);
         titlebar.append(title, actions);
 
         const body = document.createElement("div");
@@ -1174,10 +1180,16 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           placeholder,
           iframe: null,
           minimized: false,
+          reload,
           minimize,
           maximize,
         }};
 
+        reload.addEventListener("click", () => {{
+          if (!widget.iframe) return;
+          // Re-assigning src forces a reload even if the URL is unchanged.
+          widget.iframe.src = widget.iframe.src;
+        }});
         minimize.addEventListener("click", () => {{
           widget.minimized = !widget.minimized;
           minimize.classList.toggle("active", widget.minimized);
