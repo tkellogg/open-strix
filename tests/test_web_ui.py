@@ -327,6 +327,29 @@ def test_web_ui_page_includes_ui_plugin_shell(tmp_path: Path) -> None:
     assert 'fetch("/api/uis"' in page
 
 
+def test_ui_strip_grows_to_fill_available_width(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # Old fixed-width rule must be gone.
+    assert "flex: 0 0 320px;" not in page
+    # New growable rule must be present (min-width keeps it readable, max-width caps it).
+    assert "min-width: 320px;" in page
+    assert "max-width: 600px;" in page
+
+
+def test_minimize_collapses_card_via_is_minimized_class(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # CSS rule that actually hides the body when minimized.
+    assert ".ui-card.is-minimized .ui-body" in page
+    # JS toggles the class on the card element.
+    assert 'card.classList.toggle("is-minimized", widget.minimized)' in page
+
+
 def test_iframe_height_uses_max_of_html_and_body_scroll_height(tmp_path: Path) -> None:
     strix = DummyStrix(tmp_path / "atlas")
 

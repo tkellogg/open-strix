@@ -325,8 +325,10 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }}
 
       .ui-strip {{
-        flex: 0 0 320px;
-        width: 320px;
+        flex: 1 1 360px;
+        width: auto;
+        min-width: 320px;
+        max-width: 600px;
         height: calc(100vh - 2rem);
         overflow-y: auto;
         padding-right: 0.1rem;
@@ -352,6 +354,10 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         border-radius: 0.7rem;
         background: rgba(255, 250, 241, 0.9);
         box-shadow: 0 12px 28px rgba(44, 54, 64, 0.08);
+      }}
+
+      .ui-card.is-minimized .ui-body {{
+        display: none;
       }}
 
       .ui-titlebar {{
@@ -1176,6 +1182,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           widget.minimized = !widget.minimized;
           minimize.classList.toggle("active", widget.minimized);
           minimize.setAttribute("aria-pressed", widget.minimized ? "true" : "false");
+          card.classList.toggle("is-minimized", widget.minimized);
           applyUiWidgetState(widget);
         }});
         maximize.addEventListener("click", () => openUiModal(widget));
