@@ -306,3 +306,33 @@ def test_bootstrap_cleans_legacy_builtin_script_copies(tmp_path: Path) -> None:
 
     bootstrap_home_repo(layout, checkpoint_text="checkpoint")
     assert not legacy_script.exists()
+
+
+def test_materialized_builtin_skills_include_ui_skill() -> None:
+    """The `ui` skill ships SKILL.md (markdown vs HTML vs plugin guidance,
+    link-nav protocol) and ui-plugins.md (the plugin contract)."""
+    root = materialize_builtin_skills()
+
+    skill_path = root / "ui" / "SKILL.md"
+    plugins_path = root / "ui" / "ui-plugins.md"
+
+    assert skill_path.exists()
+    assert plugins_path.exists()
+
+    skill_text = skill_path.read_text(encoding="utf-8")
+    # Trigger description + cream background guidance.
+    assert "name: ui" in skill_text
+    assert "rgba(255, 250, 241, 0.84)" in skill_text
+    assert "#efe4cf" in skill_text
+    # Link-nav protocol — both shapes.
+    assert "/ui/<plugin>/<path>" in skill_text
+    assert "#/ui/<plugin>/<path>" in skill_text
+    assert 'target="_top"' in skill_text
+
+    plugins_text = plugins_path.read_text(encoding="utf-8")
+    # Plugin contract essentials.
+    assert "ui.json" in plugins_text
+    assert "OPEN_STRIX_PORT" in plugins_text
+    assert "STATE_DIR" in plugins_text
+    assert "UI_NAME" in plugins_text
+    assert "/ui/<name>/" in plugins_text

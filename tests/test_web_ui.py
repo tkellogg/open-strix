@@ -559,3 +559,28 @@ async def test_health_includes_turn_state(tmp_path: Path) -> None:
     body = json.loads(response.text)
     assert "is_processing" in body
     assert "turn_elapsed_seconds" in body
+
+
+def test_render_page_includes_ui_plugin_link_navigation(tmp_path: Path) -> None:
+    """Markdown click delegation, HTML iframe interception, and hash routing
+    must all be wired up in the rendered page. This is the regression guard
+    for the link-to-plugin nav feature (2026-05-12)."""
+    strix = DummyStrix(tmp_path / "atlas")
+    html = _render_web_ui_page(strix)
+
+    # Core helpers exist.
+    assert "function parseUiPluginHref(" in html
+    assert "function routeUiPluginNav(" in html
+    assert "function attachUiPluginLinkInterceptor(" in html
+
+    # Two attach paths: parent chat container, and inside HTML message iframes.
+    assert "attachUiPluginLinkInterceptor(messagesEl)" in html
+    assert "attachUiPluginLinkInterceptor(doc)" in html
+
+    # Hash-routed deep links (the HTML-message escape that doesn't need scripts).
+    assert "hashchange" in html
+    assert '"#/ui/"' in html
+
+    # Markdown link rewriting must explicitly skip /ui/ links so they stay
+    # in-tab and get claimed by the click delegate.
+    assert "parseUiPluginHref(href)" in html

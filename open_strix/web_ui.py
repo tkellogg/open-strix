@@ -1125,6 +1125,27 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       let shellJobOutputState = new Map();
       let pastedFiles = [];
       let uiWidgets = new Map();
+      // Route /ui/<plugin>/ links from chat messages into the matching widget.
+      // The click handler closes over uiWidgets dynamically, so it sees
+      // plugins as they register.
+      window.addEventListener("DOMContentLoaded", () => {{
+        if (messagesEl) attachUiPluginLinkInterceptor(messagesEl);
+      }});
+      if (document.readyState !== "loading" && messagesEl) {{
+        attachUiPluginLinkInterceptor(messagesEl);
+      }}
+      // Hash-routed deep links (works from sandboxed HTML iframes that use
+      // <a href="#/ui/<plugin>/..." target="_top">): listen on hashchange.
+      window.addEventListener("hashchange", () => {{
+        const h = window.location.hash;
+        if (h && h.startsWith("#/ui/")) {{
+          if (routeUiPluginNav(h)) {{
+            try {{
+              history.replaceState(null, "", window.location.pathname + window.location.search);
+            }} catch (e) {{ /* ignore */ }}
+          }}
+        }}
+      }});
       let maximizedWidget = null;
 
       function formatElapsed(sec) {{
@@ -1251,6 +1272,85 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
             }}
           }}
         }}
+      }}
+
+      function parseUiPluginHref(href) {{
+        // Accept absolute URLs, root-relative paths, and hash-routed forms.
+        // Returns {{ name, path }} if href targets a UI plugin, else null.
+        // Forms:
+        //   /ui/<name>/<rest>          (markdown link inside chat DOM)
+        //   #/ui/<name>/<rest>         (hash-routed; usable from sandboxed HTML iframes)
+        //   http(s)://host/ui/<name>/<rest>
+        if (!href) return null;
+        let path = String(href);
+        try {{
+          const u = new URL(path, window.location.origin);
+          if (u.origin !== window.location.origin) return null;
+          path = u.pathname + u.search + u.hash;
+        }} catch (e) {{
+          // not a parseable URL — fall through and try direct prefix match
+        }}
+        if (path.startsWith("#/ui/")) {{
+          path = path.slice(1);
+        }}
+        if (!path.startsWith("/ui/")) return null;
+        const rest = path.slice(4);
+        const slash = rest.indexOf("/");
+        const name = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash));
+        if (!name) return null;
+        return {{ name, path }};
+      }}
+
+      function routeUiPluginNav(href) {{
+        // Try to navigate a running plugin widget to `href`. Returns true if
+        // the link was claimed by a plugin (caller should preventDefault),
+        // false otherwise (caller should let the browser handle the link).
+        const parsed = parseUiPluginHref(href);
+        if (!parsed) return false;
+        const widget = uiWidgets.get(parsed.name);
+        if (!widget) return false;
+        if (widget.status !== "running") {{
+          // Known plugin but not booted yet — claim the click so we don't
+          // open a broken tab. The user can re-click after it starts.
+          return true;
+        }}
+        ensureUiIframe(widget);
+        if (widget.minimized) {{
+          widget.minimized = false;
+          widget.minimize.classList.remove("active");
+          widget.minimize.setAttribute("aria-pressed", "false");
+          widget.card.classList.remove("is-minimized");
+        }}
+        applyUiWidgetState(widget);
+        widget.iframe.src = parsed.path;
+        try {{
+          widget.card.scrollIntoView({{ behavior: "smooth", block: "nearest", inline: "nearest" }});
+        }} catch (e) {{
+          widget.card.scrollIntoView();
+        }}
+        return true;
+      }}
+
+      function attachUiPluginLinkInterceptor(root) {{
+        // Delegated click handler for <a> elements whose href targets a
+        // /ui/<name>/ path. Works for both the parent chat DOM (markdown
+        // messages) and the contentDocument of sandboxed HTML message
+        // iframes (allow-same-origin lets us listen even without
+        // allow-scripts inside the iframe).
+        if (!root || root.__uiPluginLinkInterceptorAttached) return;
+        root.__uiPluginLinkInterceptorAttached = true;
+        root.addEventListener("click", (event) => {{
+          if (event.defaultPrevented || event.button !== 0) return;
+          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          const anchor = event.target.closest && event.target.closest("a[href]");
+          if (!anchor) return;
+          const href = anchor.getAttribute("href");
+          if (!href) return;
+          if (routeUiPluginNav(href)) {{
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        }}, true);
       }}
 
       function renderUiPlugins(plugins) {{
@@ -1664,6 +1764,13 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         wrapper.innerHTML = marked.parse(text);
         wrapper.querySelectorAll("script").forEach((node) => node.remove());
         wrapper.querySelectorAll("a").forEach((link) => {{
+          const href = link.getAttribute("href") || "";
+          // Leave /ui/<plugin>/ and #/ui/<plugin>/ links in-tab so the
+          // delegated click handler on the messages container can route them
+          // into the matching plugin iframe instead of opening a new tab.
+          if (parseUiPluginHref(href)) {{
+            return;
+          }}
           link.target = "_blank";
           link.rel = "noreferrer";
         }});
@@ -1783,8 +1890,11 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
                     ro.observe(doc.body);
                   }}
                 }}
+                if (doc) {{
+                  attachUiPluginLinkInterceptor(doc);
+                }}
               }} catch (e) {{
-                // Sandbox or older browser without ResizeObserver: keep single measurement.
+                // Sandbox or older browser without ResizeObserver / accessor: keep single measurement.
               }}
             }});
             body.appendChild(frame);
