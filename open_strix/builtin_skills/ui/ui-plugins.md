@@ -104,6 +104,37 @@ The widget is **persistent** — Tim sees the same iframe across multiple turns.
 
 ---
 
+# Linking inside your plugin (intra-plugin navigation)
+
+This trips up almost every new plugin. **The iframe's `window.location` is `/ui/<name>/<path>` — the harness only strips the prefix on the way to your server.** That means:
+
+| Link shape in your HTML | What the browser hits | Result |
+| --- | --- | --- |
+| `href="/foo"` (absolute) | `https://chat-host/foo` | **404 at the chat root.** The harness has no `/foo` route — only `/ui/<name>/...` is proxied to you. |
+| `href="foo"` (relative) on `/` | `/ui/<name>/foo` → proxied to your `/foo` | ✅ works on the default view |
+| `href="foo"` (relative) on `/worktree/abc` | `/ui/<name>/worktree/foo` → proxied to your `/worktree/foo` | ❌ wrong depth — breaks as soon as you have nested routes |
+| `href="/ui/<name>/foo"` (prefixed absolute) | `/ui/<name>/foo` → proxied to your `/foo` | ✅ works from any depth |
+
+**Recommended: prefix every internal link with `/ui/<name>/`.** It's the same shape Tim uses to deep-link into your plugin from chat (see SKILL.md → "Linking to UI plugins from chat messages"), so there's one canonical link shape and no depth-of-current-page hazard.
+
+Concrete pattern:
+
+```python
+UI_BASE = "/ui/my-plugin"  # match the `name` in ui.json
+
+# in a template:
+f'<a href="{UI_BASE}/issue/{iid}">#{iid}</a>'
+f'<a href="{UI_BASE}/">← back to list</a>'
+```
+
+Alternative if you want to keep templates path-agnostic: emit `<base href="/ui/my-plugin/">` in your `<head>`. Then all relative links resolve against that prefix regardless of which page they appear on. Watch for the gotcha that `<base>` also affects external `href`s without a scheme — keep external links fully qualified (`https://...`).
+
+External links (GitHub, docs, anything outside your plugin) use full `https://...` URLs as normal — they bypass the proxy entirely.
+
+**Self-check before shipping:** `curl -s http://127.0.0.1:<chat_port>/ui/<name>/<any-route> | grep -oE 'href="/[^"]*"'` and verify every internal href starts with `/ui/<name>/`. Any bare `/foo` will 404 in the browser.
+
+---
+
 # Linking from chat
 
 This is the killer feature. The agent can write a link in a chat message that navigates the *plugin widget* rather than opening a new tab. See `SKILL.md` for the user-facing rules. From the plugin server's perspective:
