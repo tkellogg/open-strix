@@ -397,8 +397,24 @@ def test_plugin_titlebar_has_reload_button(tmp_path: Path) -> None:
     assert 'reload.title = "Reload"' in page
     # The reload click handler re-assigns iframe.src to force a reload.
     assert "widget.iframe.src = widget.iframe.src" in page
-    # The reload button is in the actions row.
-    assert "actions.append(reload, minimize, maximize)" in page
+    # The reload button is in the actions row (now alongside back/forward).
+    assert "actions.append(back, forward, reload, minimize, maximize)" in page
+
+
+def test_plugin_titlebar_has_back_forward_buttons(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    # Back and forward buttons are created.
+    assert 'back.title = "Back"' in page
+    assert 'forward.title = "Forward"' in page
+    # They navigate the iframe's session history (works through error pages).
+    assert "widget.iframe.contentWindow.history.back()" in page
+    assert "widget.iframe.contentWindow.history.forward()" in page
+    # Back has a fallback: if contentWindow is cross-origin or detached,
+    # reload the root plugin URL so the user always has an escape hatch.
+    assert 'widget.iframe.src = "/ui/" + encodeURIComponent(widget.name) + "/";' in page
 
 
 def test_iframe_height_uses_max_of_html_and_body_scroll_height(tmp_path: Path) -> None:

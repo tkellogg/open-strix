@@ -1185,6 +1185,18 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         title.textContent = plugin.name;
         const actions = document.createElement("div");
         actions.className = "ui-actions";
+        const back = document.createElement("button");
+        back.className = "ui-tool-button";
+        back.type = "button";
+        back.title = "Back";
+        back.setAttribute("aria-label", "Back in " + plugin.name);
+        back.textContent = "◀";
+        const forward = document.createElement("button");
+        forward.className = "ui-tool-button";
+        forward.type = "button";
+        forward.title = "Forward";
+        forward.setAttribute("aria-label", "Forward in " + plugin.name);
+        forward.textContent = "▶";
         const reload = document.createElement("button");
         reload.className = "ui-tool-button";
         reload.type = "button";
@@ -1203,7 +1215,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         maximize.title = "Maximize";
         maximize.setAttribute("aria-label", "Maximize " + plugin.name);
         maximize.textContent = "⛶";
-        actions.append(reload, minimize, maximize);
+        actions.append(back, forward, reload, minimize, maximize);
         titlebar.append(title, actions);
 
         const body = document.createElement("div");
@@ -1224,6 +1236,8 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           placeholder,
           iframe: null,
           minimized: false,
+          back,
+          forward,
           reload,
           minimize,
           maximize,
@@ -1233,6 +1247,28 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           if (!widget.iframe) return;
           // Re-assigning src forces a reload even if the URL is unchanged.
           widget.iframe.src = widget.iframe.src;
+        }});
+        back.addEventListener("click", () => {{
+          // Navigate the iframe's session history back one entry. Works
+          // across error pages since the iframe retains its own history
+          // regardless of HTTP status. Sandbox includes allow-same-origin,
+          // so contentWindow.history is reachable. A no-op silently if
+          // we're at the start of history.
+          if (!widget.iframe) return;
+          try {{
+            widget.iframe.contentWindow.history.back();
+          }} catch (e) {{
+            // Cross-origin or detached frame — fall back to reloading root.
+            widget.iframe.src = "/ui/" + encodeURIComponent(widget.name) + "/";
+          }}
+        }});
+        forward.addEventListener("click", () => {{
+          if (!widget.iframe) return;
+          try {{
+            widget.iframe.contentWindow.history.forward();
+          }} catch (e) {{
+            // No-op; can't restore forward history if cross-origin.
+          }}
         }});
         minimize.addEventListener("click", () => {{
           widget.minimized = !widget.minimized;
