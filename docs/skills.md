@@ -26,6 +26,16 @@ skills/my-skill/
   template.txt          # agent copies/adapts
 ```
 
+Skills can also ship runtime manifests:
+
+| File | Purpose |
+|------|---------|
+| `pollers.json` | Scheduled scripts that emit agent events. |
+| `ui.json` | Local web UI sidecars. |
+| `hooks.json` | Command hooks for prompt augmentation, pre/post tool calls, and startup/shutdown. |
+
+See [hooks.md](hooks.md) for the hook contract.
+
 ## Three sources of skills
 
 ### 1. Local — write your own
@@ -77,6 +87,7 @@ open-strix ships with skills that teach the agent how to operate:
 | **prediction-review** | Calibration loops — revisit predictions against ground truth, track accuracy |
 | **introspection** | Self-diagnosis from event logs — debugging, communication analysis, pattern detection |
 | **pollers** | Create and manage pollers — lightweight scripts for external awareness |
+| **hook-creator** | Create and manage command hooks for runtime events |
 
 Built-in skills are read-only and synced from the open-strix package. They live in `.open_strix_builtin_skills/` (gitignored) and are refreshed on every startup.
 

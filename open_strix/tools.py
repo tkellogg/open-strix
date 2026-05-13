@@ -789,173 +789,6 @@ class ToolsMixin:
 
             return f"[exit_code={completed.returncode}]\n{combined}"
 
-        @tool("read_file")
-        async def read_file(
-            file_path: str,
-            offset: int = 0,
-            limit: int = 2000,
-        ) -> str:
-            """Read a file and return its contents with line numbers.
-
-            Args:
-                file_path: Absolute or relative path to the file.
-                offset: Line number to start reading from (0-based).
-                limit: Maximum number of lines to return.
-            """
-            resolved = Path(file_path).expanduser().resolve()
-            if not resolved.is_file():
-                self.log_event(
-                    "tool_call_error",
-                    tool="read_file",
-                    error_type="not_found",
-                    file_path=str(resolved),
-                )
-                return f"File not found: {resolved}"
-
-            try:
-                text = await asyncio.to_thread(resolved.read_text, encoding="utf-8", errors="replace")
-            except OSError as exc:
-                self.log_event(
-                    "tool_call_error",
-                    tool="read_file",
-                    error_type="os_error",
-                    file_path=str(resolved),
-                )
-                return f"Error reading {resolved}: {exc}"
-
-            lines = text.splitlines()
-            selected = lines[offset : offset + limit]
-            numbered = [f"{i + offset + 1:6d}\t{line}" for i, line in enumerate(selected)]
-            result = "\n".join(numbered)
-            if not result:
-                result = "(empty file)"
-
-            self.log_event(
-                "file_read",
-                tool="read_file",
-                file_path=str(resolved),
-                offset=offset,
-                limit=limit,
-                lines_returned=len(selected),
-                total_lines=len(lines),
-            )
-            return result
-
-        @tool("glob")
-        async def glob_files(
-            pattern: str,
-            path: str = ".",
-        ) -> str:
-            """Find files matching a glob pattern.
-
-            Args:
-                pattern: Glob pattern (e.g. '**/*.py', 'state/*.md').
-                path: Directory to search in. Defaults to current directory.
-            """
-            base = Path(path).expanduser().resolve()
-            if not base.is_dir():
-                return f"Not a directory: {base}"
-
-            try:
-                matches = sorted(base.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-            except OSError as exc:
-                return f"Error during glob: {exc}"
-
-            # Cap output
-            capped = matches[:200]
-            result_lines = [str(m) for m in capped]
-            suffix = f"\n... and {len(matches) - 200} more" if len(matches) > 200 else ""
-
-            self.log_event(
-                "tool_call",
-                tool="glob",
-                pattern=pattern,
-                path=str(base),
-                matches=len(matches),
-            )
-            for match_path in capped:
-                if match_path.is_file():
-                    self.log_event(
-                        "file_discovery",
-                        tool="glob",
-                        file_path=str(match_path),
-                    )
-            return "\n".join(result_lines) + suffix if result_lines else "No matches."
-
-        @tool("edit_file")
-        async def edit_file(
-            file_path: str,
-            old_string: str,
-            new_string: str,
-        ) -> str:
-            """Replace an exact string in a file.
-
-            Args:
-                file_path: Path to the file to modify.
-                old_string: The exact text to find and replace (must be unique in the file).
-                new_string: The replacement text.
-            """
-            resolved = Path(file_path).expanduser().resolve()
-            if not resolved.is_file():
-                return f"File not found: {resolved}"
-
-            try:
-                content = await asyncio.to_thread(resolved.read_text, encoding="utf-8")
-            except OSError as exc:
-                return f"Error reading {resolved}: {exc}"
-
-            count = content.count(old_string)
-            if count == 0:
-                return "old_string not found in file."
-            if count > 1:
-                return f"old_string appears {count} times — must be unique. Provide more context."
-
-            new_content = content.replace(old_string, new_string, 1)
-            try:
-                await asyncio.to_thread(resolved.write_text, new_content, encoding="utf-8")
-            except OSError as exc:
-                return f"Error writing {resolved}: {exc}"
-
-            self.log_event(
-                "file_read",
-                tool="edit_file",
-                file_path=str(resolved),
-            )
-            self.log_event(
-                "file_write",
-                tool="edit_file",
-                file_path=str(resolved),
-            )
-            return f"Edited {resolved}"
-
-        @tool("write_file")
-        async def write_file(
-            file_path: str,
-            content: str,
-        ) -> str:
-            """Write content to a file, creating it if needed.
-
-            Args:
-                file_path: Path to the file to write.
-                content: The full content to write.
-            """
-            resolved = Path(file_path).expanduser().resolve()
-
-            resolved.parent.mkdir(parents=True, exist_ok=True)
-
-            try:
-                await asyncio.to_thread(resolved.write_text, content, encoding="utf-8")
-            except OSError as exc:
-                return f"Error writing {resolved}: {exc}"
-
-            self.log_event(
-                "file_write",
-                tool="write_file",
-                file_path=str(resolved),
-                bytes_written=len(content.encode("utf-8")),
-            )
-            return f"Wrote {resolved} ({len(content)} chars)"
-
         @tool("fetch_url")
         async def fetch_url(
             url: str,
@@ -1481,6 +1314,16 @@ class ToolsMixin:
             names = [plugin.name for plugin in plugins]
             return f"Reloaded. {len(plugins)} UI(s) registered: {', '.join(names)}"
 
+        @tool("reload_hooks")
+        def reload_hooks() -> str:
+            """Reload all command hooks from skills/*/hooks.json files. Call this after installing or updating a skill that includes hooks."""
+            hooks = self.hooks.discover()
+            self.log_event("tool_call", tool="reload_hooks", count=len(hooks))
+            if not hooks:
+                return "Reloaded. No hooks found."
+            names = [hook.name for hook in hooks]
+            return f"Reloaded. {len(hooks)} hook(s) registered: {', '.join(names)}"
+
         @tool("lookup")
         def lookup(query: str) -> str:
             """Look up a Discord user or channel by name or ID.  Returns matching entries with their IDs, mention format, and type.  Use this when you need to find a channel_id or user mention format."""
@@ -1676,6 +1519,7 @@ class ToolsMixin:
             remove_schedule,
             reload_pollers,
             reload_uis,
+            reload_hooks,
             climb_register,
             climb_unregister,
             climb_status,

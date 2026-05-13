@@ -53,9 +53,15 @@ from .discord import (
     DiscordMixin,
     _chunk_discord_message,
 )
+from .hooks import HookManager
 from .models import AgentEvent
 from .prompts import DEFAULT_CHECKPOINT, SYSTEM_PROMPT, render_folders_section, render_turn_prompt
-from .readonly_backend import BUILTIN_SKILLS_ROUTE, LoggingWriteGuardBackend, build_builtin_skills_backend
+from .readonly_backend import (
+    BUILTIN_SKILLS_ROUTE,
+    LoggingWriteGuardBackend,
+    WriteGuardBackend,
+    build_builtin_skills_backend,
+)
 from .scheduler import SchedulerJob, SchedulerMixin
 from .shell_jobs import ShellJobRegistry
 from .supervisor import Supervisor
@@ -373,6 +379,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self.shell_jobs = ShellJobRegistry(
             jobs_dir=self.layout.logs_dir / "shell-jobs",
         )
+        self.hooks = HookManager(self)
+        self.hooks.discover()
         self.ui_plugins = UIPluginManager(self)
 
         self.discord_client: DiscordBridge | None = None
@@ -499,6 +507,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         tools = self._build_tools()
         if extra_tools:
             tools.extend(extra_tools)
+        tools = self.hooks.wrap_tools(tools)
 
         subagents = self._build_subagents()
 
@@ -943,6 +952,34 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
 
         prompt_start = time.monotonic()
         prompt = self._render_prompt(event)
+        prompt_hook_event = await self.hooks.run_event(
+            "pre_prompt",
+            {
+                "prompt": prompt,
+                "source_event_type": event.event_type,
+                "channel_id": event.channel_id,
+                "channel_name": event.channel_name,
+                "channel_conversation_type": event.channel_conversation_type,
+                "channel_visibility": event.channel_visibility,
+                "author": event.author,
+                "attachment_names": event.attachment_names,
+                "scheduler_name": event.scheduler_name,
+                "source_id": event.source_id,
+                "source_platform": event.source_platform,
+            },
+        )
+        next_prompt = prompt_hook_event.get("prompt", prompt)
+        if isinstance(next_prompt, str):
+            prompt = next_prompt
+        else:
+            self.log_event(
+                "hook_invalid_mutation",
+                hook_event_type="pre_prompt",
+                error="'prompt' must remain a string",
+            )
+        append_prompt = prompt_hook_event.get("append_prompt")
+        if isinstance(append_prompt, str) and append_prompt:
+            prompt = f"{prompt}\n\n{append_prompt}"
         timings["context_load_seconds"] = time.monotonic() - prompt_start
         self.log_event(
             "agent_invoke_start",
@@ -1157,6 +1194,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         # Capture the running event loop for cross-thread scheduling
         # (e.g. shell job completion callbacks).
         self.loop = asyncio.get_running_loop()
+        await self.hooks.run_event(
+            "pre_startup",
+            {"home": str(self.home)},
+        )
         # Start MCP servers and recreate agent with MCP tools if configured.
         if self.config.mcp_servers:
             self.mcp_manager = MCPManager()
@@ -1202,6 +1243,16 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 host=self.config.web_ui_host,
                 port=self.config.web_ui_port,
             )
+
+        await self.hooks.run_event(
+            "post_startup",
+            {
+                "home": str(self.home),
+                "api_port": self.config.api_port,
+                "web_ui_port": self.config.web_ui_port,
+                "scheduler_running": self.scheduler.running,
+            },
+        )
 
         token = os.getenv(self.config.discord_token_env, "")
         if token:
@@ -1260,6 +1311,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
 
     async def shutdown(self) -> None:
         self.log_event("app_shutdown_start")
+        await self.hooks.run_event(
+            "pre_shutdown",
+            {"home": str(self.home)},
+        )
         self.supervisor.stop_all()
         await self.ui_plugins.stop_all()
         if self.mcp_manager is not None:
@@ -1280,6 +1335,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 pass
         if self.fetch_cache_dir.exists():
             shutil.rmtree(self.fetch_cache_dir, ignore_errors=True)
+        await self.hooks.run_event(
+            "post_shutdown",
+            {"home": str(self.home)},
+        )
         self.log_event("app_shutdown_complete")
 
 

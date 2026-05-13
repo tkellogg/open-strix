@@ -336,3 +336,16 @@ def test_materialized_builtin_skills_include_ui_skill() -> None:
     assert "STATE_DIR" in plugins_text
     assert "UI_NAME" in plugins_text
     assert "/ui/<name>/" in plugins_text
+
+
+def test_materialized_builtin_skills_include_hook_creator_skill() -> None:
+    root = materialize_builtin_skills()
+
+    skill_path = root / "hook-creator" / "SKILL.md"
+
+    assert skill_path.exists()
+    skill_text = skill_path.read_text(encoding="utf-8")
+    assert "name: hook-creator" in skill_text
+    assert "hooks.json" in skill_text
+    assert "pre_prompt" in skill_text
+    assert "include_conversation" in skill_text

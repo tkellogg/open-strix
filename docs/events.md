@@ -173,6 +173,24 @@ Tool-specific fields vary:
 
 Error types: `timeout`, `missing_shell_binary`, `validation_error`, `empty_message`, HTTP errors.
 
+### Hook Events
+
+Hooks declared in `skills/**/hooks.json` run as short-lived commands around selected runtime events: prompt rendering, tool calls, startup, and shutdown. See [hooks.md](hooks.md) for the full stdin/stdout contract.
+
+**Hook failure events** are logged and ignored so the main agent path can continue:
+
+| Event | Meaning |
+|-------|---------|
+| `hook_invalid_json` | A `hooks.json` file could not be parsed. |
+| `hook_invalid_format` | A `hooks.json` file did not contain a `hooks` array. |
+| `hook_missing_fields` | A hook entry was missing `name`, `command`, or valid `events`. |
+| `hook_timeout` | A hook command exceeded `timeout_seconds`. |
+| `hook_exec_error` | The hook process could not be started or communicated with. |
+| `hook_stderr` | The hook wrote stderr. |
+| `hook_nonzero_exit` | The hook exited non-zero. |
+| `hook_invalid_output` | The hook wrote stdout that was not a JSON object. |
+| `hook_invalid_mutation` | A hook returned malformed mutable fields, such as non-object `args` or non-string `prompt`. |
+
 ### Communication Safety Events
 
 **`send_message_loop_detected`** — Agent sent multiple messages in quick succession (soft limit, warning).

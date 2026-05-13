@@ -132,6 +132,10 @@ npx clawhub install github-poller    # GitHub issues, PRs, comments, reviews
 
 All pollers follow the same contract: run on a cron schedule, output JSONL to stdout when there's something actionable, stay silent when there isn't. Writing your own is straightforward — see the built-in **pollers** skill for the full contract and design patterns.
 
+### Runtime Hooks
+
+Skills can also declare command hooks in `hooks.json`. Hooks receive one JSON event on stdin and may write one JSON object to stdout to mutate the event before it continues. Supported surfaces include prompt augmentation, pre/post tool calls, and pre/post startup/shutdown. This is the right place for local policy, audit, metrics, OOB retrieval, and tiny runtime adapters. See [docs/hooks.md](docs/hooks.md) for the full contract.
+
 ### Events API
 
 `logs/events.jsonl` is the ambient substrate described above. When `api_port` is set in `config.yaml`, a loopback REST API accepts events from external scripts — Bluesky pollers, CI hooks, cross-agent wrappers. The introspection skill teaches the agent how to query its own event log. See [docs/events.md](docs/events.md) for the full event schema, query cookbook, and REST API reference.
