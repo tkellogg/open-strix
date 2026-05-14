@@ -334,10 +334,10 @@ def test_load_events_handles_mid_rotation_race(tmp_path: Path) -> None:
     assert result[0]["type"] == "agent_invoke_start"
 
 
-def test_load_events_deduplicates_across_siblings(tmp_path: Path) -> None:
-    """Verify no duplicate events if the same line somehow appeared in two files.
-    (Not expected in practice, but the function should not crash or deduplicate —
-    it's the caller's problem. This test just confirms the count.)"""
+def test_load_events_does_not_dedup_across_siblings(tmp_path: Path) -> None:
+    """If the same line somehow appears in two rotated files, both are returned.
+    _load_events does not deduplicate — that's the caller's problem. This test
+    pins the no-dedup contract."""
     log = tmp_path / "events.jsonl"
     event = {"type": "tool_call", "timestamp": _ts(1)}
 
