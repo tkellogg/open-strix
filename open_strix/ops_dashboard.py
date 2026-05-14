@@ -11,6 +11,9 @@ Event vocabulary used:
 - ``event_queued`` — events entering the agent queue (covers all sources)
 - ``event_deduped`` — events skipped (dedup hits)
 - ``shell_job_complete`` — async shell jobs finishing
+- ``llm_usage`` — token usage per ``agent.ainvoke`` call (``input_tokens``,
+  ``output_tokens``, ``total_tokens``, ``cache_read_input_tokens``,
+  ``cache_creation_input_tokens``, ``model``)
 - failure-shaped: ``agent_turn_missing_send_message``,
   ``post_turn_block_validation_failed``, ``scheduler_invalid_*``
 """
@@ -215,13 +218,8 @@ def _backlog_items() -> list[dict[str, str]]:
         {
             "id": "token-usage",
             "title": "Token usage by source / over time",
-            "status": "Not instrumented",
-            "blocker": (
-                "Capture the Anthropic API ``usage`` field on each agent.ainvoke "
-                "and emit a ``llm_usage`` event tied to session_id "
-                "(input_tokens, output_tokens, cache_read_input_tokens, "
-                "cache_creation_input_tokens)."
-            ),
+            "status": "Instrumented — llm_usage event emitted per agent.ainvoke",
+            "blocker": "",
         },
         {
             "id": "llm-retries",
