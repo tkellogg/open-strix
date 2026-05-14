@@ -1091,6 +1091,13 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         messages = result.get("messages")
         if not isinstance(messages, list):
             return
+        # Accumulate token usage across all LLM steps in this invoke.
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+        cache_read_input_tokens = 0
+        cache_creation_input_tokens = 0
+        has_usage = False
         for message in messages:
             if isinstance(message, AIMessage):
                 for call in message.tool_calls:
@@ -1099,6 +1106,25 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         tool=call.get("name"),
                         args=call.get("args"),
                     )
+                usage = message.usage_metadata
+                if usage:
+                    has_usage = True
+                    input_tokens += usage.get("input_tokens") or 0
+                    output_tokens += usage.get("output_tokens") or 0
+                    total_tokens += usage.get("total_tokens") or 0
+                    details = usage.get("input_token_details") or {}
+                    cache_read_input_tokens += details.get("cache_read") or 0
+                    cache_creation_input_tokens += details.get("cache_creation") or 0
+        if has_usage:
+            self.log_event(
+                "llm_usage",
+                model=self.config.model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                cache_read_input_tokens=cache_read_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+            )
 
     def _collect_tool_calls_in_turn(self, result: dict[str, Any]) -> list[str]:
         messages = result.get("messages")
