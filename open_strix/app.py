@@ -1189,6 +1189,32 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             mcp_servers=[c.config.name for c in (self.mcp_manager.connections if self.mcp_manager else [])],
         )
 
+        # Replay unprocessed events from the previous session, if any. This
+        # handles the case where the process was killed (or stalled) with
+        # unhandled web/Discord messages in the in-memory queue. See
+        # open_strix/replay.py for the policy. Disabled when window <= 0.
+        try:
+            from .replay import replay_unprocessed_events
+
+            if self.config.replay_window_seconds <= 0:
+                replayed = 0
+            else:
+                replayed = await replay_unprocessed_events(
+                    events_log_path=self.layout.events_log,
+                    current_session_id=self.session_id,
+                    enqueue_event=self.enqueue_event,
+                    window_seconds=self.config.replay_window_seconds,
+                    log_event=self.log_event,
+                )
+            if replayed:
+                print(
+                    f"[open-strix] Replayed {replayed} event(s) from previous session",
+                    flush=True,
+                )
+        except Exception as exc:
+            # Replay is best-effort; never let it block startup.
+            self.log_event("replay_failed", error=str(exc))
+
         if self.config.api_port > 0:
             from .api import start_api
 

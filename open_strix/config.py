@@ -214,6 +214,9 @@ class AppConfig:
     discord_token_env: str = "DISCORD_TOKEN"
     always_respond_bot_ids: set[str] = field(default_factory=set)
     session_log_retention_days: int = 30
+    # Replay un-acknowledged events from logs/events.jsonl on startup if they
+    # are within this window. 0 disables replay. See open_strix/replay.py.
+    replay_window_seconds: int = 600
     api_port: int = 0
     web_ui_port: int = 0
     web_ui_host: str = DEFAULT_WEB_UI_HOST
@@ -307,6 +310,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         discord_token_env=str(loaded.get("discord_token_env", "DISCORD_TOKEN")),
         always_respond_bot_ids=_normalize_id_list(loaded.get("always_respond_bot_ids")),
         session_log_retention_days=int(loaded.get("session_log_retention_days", 30)),
+        replay_window_seconds=int(loaded.get("replay_window_seconds", 600)),
         api_port=int(loaded.get("api_port", 0)),
         web_ui_port=int(loaded.get("web_ui_port", 0)),
         web_ui_host=str(loaded.get("web_ui_host", DEFAULT_WEB_UI_HOST)).strip() or DEFAULT_WEB_UI_HOST,
