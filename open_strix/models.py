@@ -16,6 +16,7 @@ class AgentEvent:
     author_id: str | None = None
     attachment_names: list[str] = field(default_factory=list)
     scheduler_name: str | None = None
+    scheduler_model: str | None = None
     dedupe_key: str | None = None
     source_id: str | None = None
     source_platform: str | None = None

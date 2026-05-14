@@ -409,6 +409,9 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self.supervisor = Supervisor(self.layout.state_dir / "climbers")
         self._draining = False
         self.mcp_manager: MCPManager | None = None
+        # Per-model agent cache for scheduler jobs that specify a custom model.
+        # Keyed by the provider-qualified model string; invalidated on reload.
+        self._scheduler_agent_cache: dict[str, Any] = {}
         self.agent = self._create_agent()
 
     def _load_chat_history(self) -> None:
@@ -474,8 +477,20 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         emoji=emoji,
                     )
 
-    def _create_agent(self, extra_tools: list[Any] | None = None) -> Any:
-        """Build the LangGraph agent with all tools."""
+    def _create_agent(
+        self,
+        extra_tools: list[Any] | None = None,
+        model_override: str | None = None,
+    ) -> Any:
+        """Build the LangGraph agent with all tools.
+
+        Args:
+            extra_tools: Additional tools to register (e.g. MCP tools).
+            model_override: Provider-qualified model string to use instead of
+                ``self.config.model``.  Scheduler jobs that set ``model:`` in
+                ``scheduler.yaml`` use this to route low-cost tasks to a
+                cheaper model class.
+        """
         mutable_backend = LoggingWriteGuardBackend(
             root_dir=self.home,
             writable_dirs=self.config.writable_dirs,
@@ -487,7 +502,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             default=mutable_backend,
             routes={BUILTIN_SKILLS_ROUTE: builtin_backend},
         )
-        model_name = _model_for_deep_agents(self.config.model)
+        raw_model = model_override if model_override else self.config.model
+        model_name = _model_for_deep_agents(raw_model)
         model = _build_chat_model(
             model_name,
             max_retries=self.config.model_max_retries,
@@ -940,6 +956,28 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 errors.append(f"{path.name}: expected a YAML mapping, got {type(loaded).__name__}")
         return errors
 
+    def _get_agent_for_scheduler_model(self, model_name: str) -> Any:
+        """Return a cached (or freshly built) agent for a per-job model override.
+
+        The cache is keyed on the provider-qualified model string and is scoped
+        to the lifetime of the agent process (dropped on config reload).  Build
+        cost is paid once per distinct model string, not per scheduler firing.
+        """
+        if model_name not in self._scheduler_agent_cache:
+            self._scheduler_agent_cache[model_name] = self._create_agent(
+                model_override=model_name
+            )
+        return self._scheduler_agent_cache[model_name]
+
+    def _reload_scheduler_jobs(self) -> None:
+        """Reload scheduler jobs and invalidate the per-model agent cache.
+
+        The cache is cleared unconditionally so stale agents from a previous
+        config are never reused after a hot reload.
+        """
+        self._scheduler_agent_cache.clear()
+        super()._reload_scheduler_jobs()
+
     async def _process_event(self, event: AgentEvent) -> None:
         self._current_turn_sent_messages = []
         self._reset_send_message_circuit_breaker()
@@ -1002,8 +1040,15 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 if event.continuation_messages
                 else [HumanMessage(content=prompt)]
             )
+            agent = (
+                self._get_agent_for_scheduler_model(
+                    _model_for_deep_agents(event.scheduler_model)
+                )
+                if event.scheduler_model
+                else self.agent
+            )
             async with self._typing_indicator(event):
-                result = await self.agent.ainvoke({"messages": agent_messages})
+                result = await agent.ainvoke({"messages": agent_messages})
             timings["agent_invoke_seconds"] = time.monotonic() - invoke_start
             self._log_agent_trace(result)
             self._write_session_log(event, prompt, result)
@@ -1056,7 +1101,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 )
                 repair_start = time.monotonic()
                 async with self._typing_indicator(event):
-                    result = await self.agent.ainvoke(
+                    result = await agent.ainvoke(
                         {"messages": [HumanMessage(content=repair_prompt)]}
                     )
                 timings["block_repair_invoke_seconds"] = time.monotonic() - repair_start

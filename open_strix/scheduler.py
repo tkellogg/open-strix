@@ -18,6 +18,17 @@ from .models import AgentEvent
 UTC = timezone.utc
 
 
+def _is_valid_model_string(s: str) -> bool:
+    """Return True if *s* looks like a provider-qualified model string.
+
+    Accepts any ``provider:name`` form (e.g. ``anthropic:claude-haiku-4-5``,
+    ``openai:gpt-4o-mini``).  Rejects plain strings without a colon so that
+    typos like ``claude-haiku-4-5`` surface at config-load time rather than
+    when the scheduler turn fires.
+    """
+    return bool(s) and ":" in s.strip()
+
+
 @dataclass
 class SchedulerJob:
     name: str
@@ -25,6 +36,7 @@ class SchedulerJob:
     cron: str | None = None
     time_of_day: str | None = None
     channel_id: str | None = None
+    model: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"name": self.name, "prompt": self.prompt}
@@ -34,6 +46,8 @@ class SchedulerJob:
             data["time_of_day"] = self.time_of_day
         if self.channel_id:
             data["channel_id"] = self.channel_id
+        if self.model:
+            data["model"] = self.model
         return data
 
 
@@ -73,6 +87,17 @@ class SchedulerMixin:
             cron = str(raw.get("cron", "")).strip() or None
             time_of_day = str(raw.get("time_of_day", "")).strip() or None
             channel_id = str(raw.get("channel_id", "")).strip() or None
+            raw_model = str(raw.get("model", "")).strip() or None
+            if raw_model and not _is_valid_model_string(raw_model):
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "scheduler job %r has invalid model string %r — "
+                    "must be provider:name (e.g. anthropic:claude-haiku-4-5); "
+                    "falling back to global model",
+                    name,
+                    raw_model,
+                )
+                raw_model = None
             jobs.append(
                 SchedulerJob(
                     name=name,
@@ -80,6 +105,7 @@ class SchedulerMixin:
                     cron=cron,
                     time_of_day=time_of_day,
                     channel_id=channel_id,
+                    model=raw_model,
                 ),
             )
         return jobs
@@ -211,6 +237,7 @@ class SchedulerMixin:
                     "name": job.name,
                     "prompt": job.prompt,
                     "channel_id": job.channel_id,
+                    "model": job.model,
                 },
                 id=f"open_strix:{job.name}",
                 replace_existing=True,
@@ -249,7 +276,13 @@ class SchedulerMixin:
             pollers=len(pollers),
         )
 
-    async def _on_scheduler_fire(self, name: str, prompt: str, channel_id: str | None = None) -> None:
+    async def _on_scheduler_fire(
+        self,
+        name: str,
+        prompt: str,
+        channel_id: str | None = None,
+        model: str | None = None,
+    ) -> None:
         # Async callback keeps scheduler execution on the event loop.
         await self.enqueue_event(
             AgentEvent(
@@ -257,6 +290,7 @@ class SchedulerMixin:
                 prompt=prompt,
                 channel_id=channel_id,
                 scheduler_name=name,
+                scheduler_model=model,
                 dedupe_key=f"scheduler:{name}",
             ),
         )
