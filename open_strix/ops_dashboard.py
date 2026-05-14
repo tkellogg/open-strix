@@ -39,22 +39,33 @@ def _parse_ts(text: str) -> datetime | None:
 def _load_events(events_log: Path, days: int) -> list[dict[str, Any]]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     out: list[dict[str, Any]] = []
-    if not events_log.exists():
-        return out
-    with events_log.open() as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            ts = _parse_ts(record.get("timestamp", ""))
-            if ts is None or ts < cutoff:
-                continue
-            record["_ts"] = ts
-            out.append(record)
+
+    # Collect the live file plus all rotated siblings (events.jsonl.20260421T160744Z, etc.).
+    # Rotated siblings sort chronologically among themselves by their timestamp suffix.
+    # The live file sorts first (no suffix) but record-level ts filtering handles ordering.
+    candidates = sorted(events_log.parent.glob(events_log.name + "*"))
+
+    for candidate in candidates:
+        try:
+            fh = candidate.open()
+        except OSError:
+            # Sibling may have been mid-rotation (renamed away between glob and open).
+            continue
+        with fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = _parse_ts(record.get("timestamp", ""))
+                if ts is None or ts < cutoff:
+                    continue
+                record["_ts"] = ts
+                out.append(record)
+
     return out
 
 

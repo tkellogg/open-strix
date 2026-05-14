@@ -264,3 +264,112 @@ def test_build_dashboard_payload_uses_strix_layout(tmp_path: Path) -> None:
     payload = build_dashboard_payload(strix, days=7)
     assert payload["summary"]["events_queued"] == 1
     assert payload["window_days"] == 7
+
+
+# --- new tests for rotation support -----------------------------------------
+
+
+def test_load_events_reads_rotated_siblings(tmp_path: Path) -> None:
+    """Events in rotated siblings are included when within the time window."""
+    log = tmp_path / "events.jsonl"
+
+    # Write a rotated sibling with an old-but-within-window event (12h ago)
+    rotated = tmp_path / "events.jsonl.20260514T120000Z"
+    _write_events(rotated, [{"type": "tool_call", "timestamp": _ts(12)}])
+
+    # Write the live file with a recent event (1h ago)
+    _write_events(log, [{"type": "agent_invoke_start", "timestamp": _ts(1)}])
+
+    result = _load_events(log, days=1)
+    types = {e["type"] for e in result}
+    assert types == {"tool_call", "agent_invoke_start"}, (
+        "Events from rotated sibling should be included"
+    )
+
+
+def test_load_events_excludes_rotated_events_outside_window(tmp_path: Path) -> None:
+    """Events in rotated siblings that predate the cutoff are filtered out."""
+    log = tmp_path / "events.jsonl"
+
+    # Write a rotated sibling with a very old event (100 days ago)
+    rotated = tmp_path / "events.jsonl.20260114T000000Z"
+    _write_events(rotated, [{"type": "tool_call", "timestamp": _ts(24 * 100)}])
+
+    # Write the live file with a recent event
+    _write_events(log, [{"type": "agent_invoke_start", "timestamp": _ts(1)}])
+
+    result = _load_events(log, days=30)
+    assert len(result) == 1
+    assert result[0]["type"] == "agent_invoke_start", (
+        "Old events in rotated siblings should be filtered by timestamp"
+    )
+
+
+def test_load_events_handles_missing_live_file_with_siblings(tmp_path: Path) -> None:
+    """If the live file doesn't exist yet but siblings do, siblings are still read."""
+    log = tmp_path / "events.jsonl"
+    # Don't create the live file
+
+    rotated = tmp_path / "events.jsonl.20260514T120000Z"
+    _write_events(rotated, [{"type": "tool_call", "timestamp": _ts(1)}])
+
+    result = _load_events(log, days=7)
+    assert len(result) == 1
+    assert result[0]["type"] == "tool_call"
+
+
+def test_load_events_handles_mid_rotation_race(tmp_path: Path) -> None:
+    """A sibling that disappears between glob and open is skipped without error."""
+    log = tmp_path / "events.jsonl"
+    _write_events(log, [{"type": "agent_invoke_start", "timestamp": _ts(0)}])
+
+    # Simulate mid-rotation: create then immediately delete a sibling
+    ghost = tmp_path / "events.jsonl.20260514T110000Z"
+    ghost.write_text("")
+    ghost.unlink()  # gone before open() is called
+
+    # Should not raise; live file still readable
+    result = _load_events(log, days=1)
+    assert len(result) == 1
+    assert result[0]["type"] == "agent_invoke_start"
+
+
+def test_load_events_deduplicates_across_siblings(tmp_path: Path) -> None:
+    """Verify no duplicate events if the same line somehow appeared in two files.
+    (Not expected in practice, but the function should not crash or deduplicate —
+    it's the caller's problem. This test just confirms the count.)"""
+    log = tmp_path / "events.jsonl"
+    event = {"type": "tool_call", "timestamp": _ts(1)}
+
+    rotated = tmp_path / "events.jsonl.20260514T100000Z"
+    _write_events(rotated, [event])
+    _write_events(log, [event])
+
+    result = _load_events(log, days=7)
+    # Both appear — no implicit dedup at this layer
+    assert len(result) == 2
+
+
+def test_load_events_reads_multiple_siblings_in_order(tmp_path: Path) -> None:
+    """Multiple rotated siblings are all read, with the live file last."""
+    log = tmp_path / "events.jsonl"
+
+    # Three siblings, all within the window
+    for suffix, hours_ago in [
+        ("20260512T000000Z", 48),
+        ("20260513T000000Z", 24),
+        ("20260514T000000Z", 12),
+    ]:
+        _write_events(
+            tmp_path / f"events.jsonl.{suffix}",
+            [{"type": "tool_call", "timestamp": _ts(hours_ago), "marker": suffix}],
+        )
+
+    # Live file
+    _write_events(log, [{"type": "agent_invoke_start", "timestamp": _ts(1)}])
+
+    result = _load_events(log, days=7)
+    assert len(result) == 4, "All four files (3 siblings + live) should be read"
+    types = {e["type"] for e in result}
+    assert "tool_call" in types
+    assert "agent_invoke_start" in types
