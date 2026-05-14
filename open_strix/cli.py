@@ -755,6 +755,7 @@ def _print_setup_walkthrough(home: Path) -> None:
         4) Config walkthrough (config.yaml)
         - model: model name or provider:model
         - model_max_retries: provider retry attempts for transient API/model errors
+        - model_request_timeout_seconds: per-request provider timeout before retrying
         - journal_entries_in_prompt: number of journal rows injected into prompt
         - discord_messages_in_prompt: number of recent Discord messages in prompt
         - discord_token_env: env var to read Discord token from (default DISCORD_TOKEN)

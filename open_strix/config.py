@@ -13,6 +13,7 @@ DEFAULT_MODEL = "MiniMax-M2.5"
 DEFAULT_MODEL_PROVIDER = "anthropic"
 DEFAULT_MODEL_MAX_RETRIES = 6
 DEFAULT_MODEL_MAX_OUTPUT_TOKENS = 32768
+DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS = 600
 STATE_DIR_NAME = "state"
 DEFAULT_WEB_UI_HOST = "127.0.0.1"
 DEFAULT_WEB_UI_CHANNEL_ID = "local-web"
@@ -29,6 +30,7 @@ DEFAULT_CONFIG = """\
 model: MiniMax-M2.5
 model_max_retries: 6
 model_max_output_tokens: 32768
+model_request_timeout_seconds: 600
 journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
@@ -208,6 +210,7 @@ class AppConfig:
     model: str = DEFAULT_MODEL
     model_max_retries: int = DEFAULT_MODEL_MAX_RETRIES
     model_max_output_tokens: int = DEFAULT_MODEL_MAX_OUTPUT_TOKENS
+    model_request_timeout_seconds: int = DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
     name: str = ""
     journal_entries_in_prompt: int = 90
     discord_messages_in_prompt: int = 10
@@ -301,6 +304,15 @@ def load_config(layout: RepoLayout) -> AppConfig:
         model_max_output_tokens=max(
             1, int(loaded.get("model_max_output_tokens", DEFAULT_MODEL_MAX_OUTPUT_TOKENS))
         ),
+        model_request_timeout_seconds=max(
+            1,
+            int(
+                loaded.get(
+                    "model_request_timeout_seconds",
+                    DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS,
+                )
+            ),
+        ),
         name=str(loaded.get("name", "")).strip(),
         journal_entries_in_prompt=int(loaded.get("journal_entries_in_prompt", 90)),
         discord_messages_in_prompt=int(loaded.get("discord_messages_in_prompt", 10)),
@@ -337,6 +349,10 @@ def _ensure_config_defaults(config_file: Path) -> None:
 
     if "model_max_output_tokens" not in loaded:
         loaded["model_max_output_tokens"] = DEFAULT_MODEL_MAX_OUTPUT_TOKENS
+        changed = True
+
+    if "model_request_timeout_seconds" not in loaded:
+        loaded["model_request_timeout_seconds"] = DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
         changed = True
 
     if "always_respond_bot_ids" not in loaded:

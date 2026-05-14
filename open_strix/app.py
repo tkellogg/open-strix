@@ -38,6 +38,7 @@ from .config import (
     AppConfig,
     DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
     DEFAULT_MODEL_MAX_RETRIES,
+    DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS,
     RepoLayout,
     bootstrap_home_repo,
     load_config,
@@ -133,6 +134,7 @@ def _build_chat_model(
     *,
     max_retries: int = DEFAULT_MODEL_MAX_RETRIES,
     max_tokens: int = DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
+    request_timeout_seconds: int = DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS,
 ) -> Any:
     # langchain-anthropic falls back to 4096 max output tokens for any model
     # not in its Claude-only profile table. MiniMax-M2.5 triggers that fallback,
@@ -141,6 +143,7 @@ def _build_chat_model(
     model_init_params: dict[str, Any] = {
         "max_retries": max(0, int(max_retries)),
         "max_tokens": max(1, int(max_tokens)),
+        "timeout": max(1, int(request_timeout_seconds)),
     }
     if model_name.startswith("openai:"):
         model_init_params["use_responses_api"] = True
@@ -488,6 +491,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             model_name,
             max_retries=self.config.model_max_retries,
             max_tokens=self.config.model_max_output_tokens,
+            request_timeout_seconds=self.config.model_request_timeout_seconds,
         )
         skills_sources: list[str] = []
         if self.layout.skills_dir.exists():

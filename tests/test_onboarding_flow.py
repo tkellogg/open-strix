@@ -73,6 +73,7 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
     config_text = (home / "config.yaml").read_text(encoding="utf-8")
     assert "model: MiniMax-M2.5" in config_text
     assert "model_max_retries: 6" in config_text
+    assert "model_request_timeout_seconds: 600" in config_text
     assert "always_respond_bot_ids: []" in config_text
     assert "default_reply_channel" not in config_text
     assert "state_dir" not in config_text

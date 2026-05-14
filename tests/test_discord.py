@@ -73,13 +73,14 @@ def test_default_model_is_minimax_even_if_config_model_is_null(
     assert app.config.model == "MiniMax-M2.5"
     assert app.config.model_max_retries == 6
     assert model_init["model_name"] == "anthropic:MiniMax-M2.5"
-    assert model_init["kwargs"] == {"max_retries": 6, "max_tokens": 32768}
+    assert model_init["kwargs"] == {"max_retries": 6, "max_tokens": 32768, "timeout": 600}
     assert captured["model"] is sentinel_model
     assert captured["skills"] == ["/skills", "/.open_strix_builtin_skills"]
     config_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
     assert "model: MiniMax-M2.5" in config_text
     assert "model_max_retries: 6" in config_text
     assert "model_max_output_tokens: 32768" in config_text
+    assert "model_request_timeout_seconds: 600" in config_text
     assert "always_respond_bot_ids: []" in config_text
 
 
@@ -122,7 +123,33 @@ def test_custom_model_max_retries_is_passed_to_model_init(
     app_mod.OpenStrixApp(tmp_path)
 
     assert model_init["model_name"] == "anthropic:claude-opus-4-1-20250805"
-    assert model_init["kwargs"] == {"max_retries": 11, "max_tokens": 32768}
+    assert model_init["kwargs"] == {"max_retries": 11, "max_tokens": 32768, "timeout": 600}
+
+
+def test_custom_model_request_timeout_is_passed_to_model_init(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_init: dict[str, Any] = {}
+
+    def fake_init_chat_model(model_name: str, **kwargs: Any) -> object:
+        model_init["model_name"] = model_name
+        model_init["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(app_mod, "init_chat_model", fake_init_chat_model)
+    monkeypatch.setattr(app_mod, "create_deep_agent", lambda **_: DummyAgent())
+    (tmp_path / "config.yaml").write_text(
+        "model: claude-opus-4-1-20250805\n"
+        "model_max_retries: 200\n"
+        "model_request_timeout_seconds: 900\n",
+        encoding="utf-8",
+    )
+
+    app_mod.OpenStrixApp(tmp_path)
+
+    assert model_init["model_name"] == "anthropic:claude-opus-4-1-20250805"
+    assert model_init["kwargs"] == {"max_retries": 200, "max_tokens": 32768, "timeout": 900}
 
 
 def test_log_event_includes_stable_session_id_for_app_run(

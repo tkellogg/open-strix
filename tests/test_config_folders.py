@@ -10,13 +10,14 @@ import yaml
 from open_strix.config import (
     DEFAULT_FOLDERS,
     DEFAULT_MODEL_MAX_RETRIES,
+    DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS,
     AppConfig,
     RepoLayout,
     _parse_folders,
     bootstrap_home_repo,
     load_config,
 )
-from open_strix.app import WriteGuardBackend
+from open_strix.readonly_backend import WriteGuardBackend
 from open_strix.prompts import render_folders_section
 
 
@@ -61,6 +62,7 @@ class TestAppConfigFolders:
         config = AppConfig()
         assert config.folders == DEFAULT_FOLDERS
         assert config.model_max_retries == DEFAULT_MODEL_MAX_RETRIES
+        assert config.model_request_timeout_seconds == DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
         assert config.name == ""
         assert config.web_ui_host == "127.0.0.1"
         assert config.web_ui_channel_id == "local-web"
@@ -83,6 +85,7 @@ class TestLoadConfigFolders:
         config_data = {
             "model": "test-model",
             "model_max_retries": 9,
+            "model_request_timeout_seconds": 900,
             "folders": {"state": "rw", "data": "ro"},
             "web_ui_port": 8081,
             "web_ui_host": "0.0.0.0",
@@ -95,6 +98,7 @@ class TestLoadConfigFolders:
         config = load_config(layout)
         assert config.folders == {"state": "rw", "data": "ro"}
         assert config.model_max_retries == 9
+        assert config.model_request_timeout_seconds == 900
         assert config.web_ui_port == 8081
         assert config.web_ui_host == "0.0.0.0"
         assert config.web_ui_channel_id == "local-web"
@@ -120,6 +124,7 @@ class TestLoadConfigFolders:
         config = load_config(layout)
         assert config.folders == DEFAULT_FOLDERS
         assert config.model_max_retries == DEFAULT_MODEL_MAX_RETRIES
+        assert config.model_request_timeout_seconds == DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
         assert config.name == ""
 
 
@@ -174,6 +179,7 @@ class TestBootstrapCreatesFolders:
         bootstrap_home_repo(layout, checkpoint_text="test")
         loaded = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
         assert loaded["model_max_retries"] == DEFAULT_MODEL_MAX_RETRIES
+        assert loaded["model_request_timeout_seconds"] == DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
         assert "folders" in loaded
         assert loaded["folders"] == DEFAULT_FOLDERS
         assert loaded["web_ui_host"] == "127.0.0.1"

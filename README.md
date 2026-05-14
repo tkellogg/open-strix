@@ -209,6 +209,8 @@ pip install -U open-strix
 ```yaml
 model: MiniMax-M2.5
 model_max_retries: 6
+model_max_output_tokens: 32768
+model_request_timeout_seconds: 600
 journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
@@ -220,7 +222,7 @@ web_ui_channel_id: local-web
 ```
 
 Models use the Anthropic-compatible API format. MiniMax M2.5 and Kimi K2.5 both work out of the box. Any model with an Anthropic-compatible endpoint will work — set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` in `.env`.
-`model_max_retries` controls provider-level retry attempts for transient failures like 5xxs and timeouts.
+`model_max_retries` controls provider-level retry attempts for transient failures like 5xxs and timeouts. `model_request_timeout_seconds` controls the per-request provider timeout before that retry strategy can make another attempt.
 
 ## Tests
 
