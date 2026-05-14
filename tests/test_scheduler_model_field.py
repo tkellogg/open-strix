@@ -232,3 +232,162 @@ class TestOnSchedulerFireModel:
         app = FakeApp(tmp_home)
         await app._on_scheduler_fire(name="default-job", prompt="p")
         assert app.enqueued[0].scheduler_model is None
+
+
+# ── Dispatch integration: main + block-repair both hit the per-job agent ──
+
+import open_strix.app as app_mod
+from langchain_core.messages import AIMessage
+
+
+def _build_app_with_two_agents(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    main_agent: Any,
+    haiku_agent: Any,
+) -> app_mod.OpenStrixApp:
+    """Build a real OpenStrixApp where _create_agent is deterministic.
+
+    The first call (from __init__) produces `main_agent`; any subsequent call
+    with model_override produces `haiku_agent`.
+    """
+    call_counts = [0]
+
+    def _fake_create_deep_agent(**kwargs: Any) -> Any:
+        call_counts[0] += 1
+        # First call is always the default self.agent; later calls get haiku.
+        if call_counts[0] == 1:
+            return main_agent
+        return haiku_agent
+
+    monkeypatch.setattr(app_mod, "create_deep_agent", _fake_create_deep_agent)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    async def _noop_git(_event: Any) -> str:
+        return "skip: test"
+
+    app._run_post_turn_git_sync = _noop_git  # type: ignore[assignment]
+    return app
+
+
+class _RecordingAgent:
+    """Tracks every ainvoke call so tests can assert which agent was used."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.invocations: list[dict[str, Any]] = []
+
+    async def ainvoke(self, messages: dict[str, Any]) -> dict[str, Any]:
+        self.invocations.append(messages)
+        return {"messages": [AIMessage(content=f"response from {self.name}")]}
+
+
+class TestDispatchIntegration:
+    """Integration tests: assert that _process_event routes both the main
+    ainvoke and the block-repair ainvoke to the correct agent."""
+
+    def test_scheduler_model_routes_main_invoke_to_per_job_agent(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When event.scheduler_model is set, _process_event must call the
+        per-job (haiku) agent for the primary invoke, not self.agent."""
+        main_agent = _RecordingAgent("main")
+        haiku_agent = _RecordingAgent("haiku")
+        app = _build_app_with_two_agents(
+            tmp_path, monkeypatch, main_agent=main_agent, haiku_agent=haiku_agent
+        )
+
+        asyncio.run(
+            app._process_event(
+                app_mod.AgentEvent(
+                    event_type="scheduler",
+                    prompt="run cheap scan",
+                    channel_id=None,
+                    scheduler_model="anthropic:claude-haiku-4-5",
+                )
+            )
+        )
+
+        assert len(haiku_agent.invocations) == 1, (
+            f"haiku agent should have been invoked once for main turn; "
+            f"got {len(haiku_agent.invocations)}"
+        )
+        assert len(main_agent.invocations) == 0, (
+            f"main agent should NOT be invoked when scheduler_model is set; "
+            f"got {len(main_agent.invocations)}"
+        )
+
+    def test_scheduler_model_routes_block_repair_to_per_job_agent(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When event.scheduler_model is set AND block repair fires, both the
+        main ainvoke and the repair ainvoke must use the per-job agent."""
+        main_agent = _RecordingAgent("main")
+        haiku_agent = _RecordingAgent("haiku")
+        app = _build_app_with_two_agents(
+            tmp_path, monkeypatch, main_agent=main_agent, haiku_agent=haiku_agent
+        )
+
+        # Inject one round of block errors so repair fires exactly once.
+        original_validate = app._validate_memory_blocks
+        validate_calls = [0]
+
+        def _broken_once() -> list[str]:
+            validate_calls[0] += 1
+            if validate_calls[0] == 1:
+                return ["some_block: expected a YAML mapping, got str"]
+            return original_validate()
+
+        app._validate_memory_blocks = _broken_once  # type: ignore[assignment]
+
+        asyncio.run(
+            app._process_event(
+                app_mod.AgentEvent(
+                    event_type="scheduler",
+                    prompt="run cheap scan",
+                    channel_id=None,
+                    scheduler_model="anthropic:claude-haiku-4-5",
+                )
+            )
+        )
+
+        # haiku agent must have been called for both main invoke and repair.
+        assert len(haiku_agent.invocations) == 2, (
+            f"haiku agent should be called for main invoke + block repair; "
+            f"got {len(haiku_agent.invocations)}"
+        )
+        assert len(main_agent.invocations) == 0, (
+            "main agent must never be invoked when scheduler_model is set, "
+            "even during block repair"
+        )
+
+    def test_no_scheduler_model_uses_default_agent(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When event.scheduler_model is None, _process_event must use
+        self.agent (the default), not a cached per-job agent."""
+        main_agent = _RecordingAgent("main")
+        haiku_agent = _RecordingAgent("haiku")
+        app = _build_app_with_two_agents(
+            tmp_path, monkeypatch, main_agent=main_agent, haiku_agent=haiku_agent
+        )
+
+        asyncio.run(
+            app._process_event(
+                app_mod.AgentEvent(
+                    event_type="discord_message",
+                    prompt="hello",
+                    channel_id="1234",
+                    scheduler_model=None,
+                )
+            )
+        )
+
+        assert len(main_agent.invocations) == 1, (
+            f"main agent should handle default (no-model-override) turns; "
+            f"got {len(main_agent.invocations)}"
+        )
+        assert len(haiku_agent.invocations) == 0, (
+            "per-job agent must not be invoked for turns without scheduler_model"
+        )
