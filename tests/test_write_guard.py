@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from open_strix.app import WriteGuardBackend
+from open_strix.readonly_backend import WriteGuardBackend
 
 
 @pytest.fixture
