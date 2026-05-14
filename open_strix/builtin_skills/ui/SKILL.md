@@ -50,7 +50,7 @@ Two safe strategies:
 
 HTML messages use `sandbox="allow-scripts allow-forms"` — scripts and forms work, but the frame has an opaque origin. Do **not** assume same-origin access. The reply cannot read the parent DOM, and the parent cannot inspect the reply DOM after load.
 
-For parent-owned interactions, use the HTML action API in `html-actions.md`. The harness injects a tiny bridge that lets links, buttons, forms, and scripts ask the parent app to do controlled things like navigate a widget or send a chat message.
+For parent-owned interactions, use the HTML action API in `html-actions.md`. The harness injects a tiny bridge that lets links, buttons, forms, and scripts ask the parent app to do controlled things like navigate a widget, send a chat message, or continue from the current HTML reply's agent context.
 
 If the interaction should persist across turns or act as a reusable app surface, build a UI plugin.
 

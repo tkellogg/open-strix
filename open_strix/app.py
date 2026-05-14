@@ -391,6 +391,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self.web_ui_runner: Any | None = None
         self.worker_task: asyncio.Task[Any] | None = None
         self._current_turn_sent_messages: list[tuple[str, str]] | None = None
+        self._web_continuation_context: dict[str, list[Any]] = {}
         self.send_message_loop_soft_limit = SEND_MESSAGE_LOOP_SOFT_LIMIT
         self.send_message_loop_warn_limit = SEND_MESSAGE_LOOP_WARN_LIMIT
         self.send_message_loop_hard_limit = SEND_MESSAGE_LOOP_HARD_LIMIT
@@ -955,7 +956,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         repair_invoke_count = 0
 
         prompt_start = time.monotonic()
-        prompt = self._render_prompt(event)
+        if event.continuation_messages:
+            prompt = event.prompt
+        else:
+            prompt = self._render_prompt(event)
         prompt_hook_event = await self.hooks.run_event(
             "pre_prompt",
             {
@@ -993,11 +997,27 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         )
         try:
             invoke_start = time.monotonic()
+            agent_messages = (
+                [*event.continuation_messages, HumanMessage(content=prompt)]
+                if event.continuation_messages
+                else [HumanMessage(content=prompt)]
+            )
             async with self._typing_indicator(event):
-                result = await self.agent.ainvoke({"messages": [HumanMessage(content=prompt)]})
+                result = await self.agent.ainvoke({"messages": agent_messages})
             timings["agent_invoke_seconds"] = time.monotonic() - invoke_start
             self._log_agent_trace(result)
             self._write_session_log(event, prompt, result)
+            result_messages = result.get("messages")
+            sent_web_message_ids = [
+                message_id
+                for channel_id, message_id in (self._current_turn_sent_messages or [])
+                if self.is_local_web_channel(channel_id) and message_id
+            ]
+            if isinstance(result_messages, list) and sent_web_message_ids:
+                self.cache_web_continuation_context(
+                    message_ids=sent_web_message_ids,
+                    messages=result_messages,
+                )
 
             final_text = self._extract_final_text(result)
             self.log_event(

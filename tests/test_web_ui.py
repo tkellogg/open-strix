@@ -10,6 +10,7 @@ import time
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from aiohttp.web_request import FileField
+from langchain_core.messages import HumanMessage
 from multidict import CIMultiDict, CIMultiDictProxy, MultiDict
 import pytest
 
@@ -234,6 +235,143 @@ async def test_web_ui_message_flow_and_attachment_serving(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_web_ui_continue_uses_cached_agent_context(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+    previous_messages = [HumanMessage(content="original agent turn prompt")]
+    strix.cache_web_continuation_context(
+        message_ids=["web-agent-reply"],
+        messages=previous_messages,
+    )
+    app = _build_web_ui_app(strix)
+    continue_handler = _get_route_handler(app, "/api/messages/continue", "POST")
+
+    request = make_mocked_request(
+        "POST",
+        "/api/messages/continue",
+        headers={"Content-Type": "application/json"},
+        payload=None,
+        app=app,
+    )
+
+    async def _json() -> dict[str, str]:
+        return {
+            "source_message_id": "web-agent-reply",
+            "text": "continue from here",
+        }
+
+    request.json = _json  # type: ignore[method-assign]
+
+    response = await continue_handler(request)
+    assert response.status == 200
+    body = json.loads(response.text)
+    assert body["status"] == "queued"
+    assert body["continuation_source_id"] == "web-agent-reply"
+
+    assert len(strix.enqueued) == 1
+    event = strix.enqueued[0]
+    assert event.event_type == "web_continue"
+    assert event.prompt == "continue from here"
+    assert event.continuation_messages == previous_messages
+
+
+@pytest.mark.asyncio
+async def test_web_ui_continue_loads_persisted_agent_context(tmp_path: Path) -> None:
+    home = tmp_path / "atlas"
+    original_strix = DummyStrix(home)
+    previous_messages = [HumanMessage(content="agent context before web restart")]
+    original_strix.cache_web_continuation_context(
+        message_ids=["web-agent-reply"],
+        messages=previous_messages,
+    )
+    assert original_strix._web_continuation_path("web-agent-reply").exists()
+
+    restarted_strix = DummyStrix(home)
+    app = _build_web_ui_app(restarted_strix)
+    continue_handler = _get_route_handler(app, "/api/messages/continue", "POST")
+
+    request = make_mocked_request(
+        "POST",
+        "/api/messages/continue",
+        headers={"Content-Type": "application/json"},
+        payload=None,
+        app=app,
+    )
+
+    async def _json() -> dict[str, str]:
+        return {
+            "source_message_id": "web-agent-reply",
+            "text": "continue after restart",
+        }
+
+    request.json = _json  # type: ignore[method-assign]
+
+    response = await continue_handler(request)
+    assert response.status == 200
+    event = restarted_strix.enqueued[0]
+    assert event.event_type == "web_continue"
+    assert event.prompt == "continue after restart"
+    assert event.continuation_messages == previous_messages
+
+
+@pytest.mark.asyncio
+async def test_web_ui_continue_waits_for_active_turn_context(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+    previous_messages = [HumanMessage(content="agent context after turn finishes")]
+    strix._current_turn_sent_messages = [("local-web", "web-agent-reply")]
+
+    continue_task = asyncio.create_task(
+        strix.handle_web_continue(
+            source_message_id="web-agent-reply",
+            text="continue after the send_message tool returns",
+        ),
+    )
+    await asyncio.sleep(0)
+    assert not continue_task.done()
+
+    strix.cache_web_continuation_context(
+        message_ids=["web-agent-reply"],
+        messages=previous_messages,
+    )
+
+    message_id = await continue_task
+    assert message_id.startswith("web-")
+    assert strix.logged[0]["type"] == "web_continue_context_wait"
+    event = strix.enqueued[0]
+    assert event.event_type == "web_continue"
+    assert event.prompt == "continue after the send_message tool returns"
+    assert event.continuation_messages == previous_messages
+
+
+@pytest.mark.asyncio
+async def test_web_ui_continue_requires_cached_context(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+    app = _build_web_ui_app(strix)
+    continue_handler = _get_route_handler(app, "/api/messages/continue", "POST")
+
+    request = make_mocked_request(
+        "POST",
+        "/api/messages/continue",
+        headers={"Content-Type": "application/json"},
+        payload=None,
+        app=app,
+    )
+
+    async def _json() -> dict[str, str]:
+        return {
+            "source_message_id": "missing",
+            "text": "continue from here",
+        }
+
+    request.json = _json  # type: ignore[method-assign]
+
+    response = await continue_handler(request)
+    assert response.status == 400
+    body = json.loads(response.text)
+    assert "continuation context is not available" in body["error"]
+    assert "regenerate the HTML control" in body["error"]
+
+
+@pytest.mark.asyncio
 async def test_local_web_send_and_react_round_trip(tmp_path: Path) -> None:
     strix = DummyStrix(tmp_path)
     shared_file = tmp_path / "state" / "summary.txt"
@@ -312,7 +450,7 @@ def test_web_ui_renders_html_in_iframe(tmp_path: Path) -> None:
     assert 'frame.setAttribute("sandbox", "allow-scripts allow-forms");' in page
     assert "function htmlWithBridge(" in page
     assert "function htmlMessageBridgeSource(" in page
-    assert 'frame.setAttribute("srcdoc", htmlWithBridge(message.content || ""));' in page
+    assert 'frame.setAttribute("srcdoc", htmlWithBridge(message.content || "", message.message_id || ""));' in page
     html_message_start = page.index('if (message.format === "html")')
     html_message_end = page.index("body.appendChild(frame);", html_message_start)
     html_message_block = page[html_message_start:html_message_end]
@@ -593,6 +731,7 @@ def test_render_page_includes_ui_plugin_link_navigation(tmp_path: Path) -> None:
     assert "function attachStrixHtmlActions(" in html
     assert "function runStrixAction(" in html
     assert "function postWebChatMessage(" in html
+    assert "function postWebConversationContinue(" in html
 
     # Two action paths: parent chat container and injected HTML-message bridge.
     assert "attachStrixHtmlActions(messagesEl)" in html
@@ -603,6 +742,9 @@ def test_render_page_includes_ui_plugin_link_navigation(tmp_path: Path) -> None:
     assert "data-strix-action" in html
     assert 'action === "widget.navigate"' in html
     assert 'action === "chat.send"' in html
+    assert 'action === "conversation.continue"' in html
+    assert 'frame.dataset.messageId = message.message_id || "";' in html
+    assert "sourceMessageId" in html
     assert "clickedIsSubmitter" in html
     assert 'root.addEventListener("keydown"' in html
     assert 'window.addEventListener("message"' in html

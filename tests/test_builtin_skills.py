@@ -337,6 +337,7 @@ def test_materialized_builtin_skills_include_ui_skill() -> None:
     actions_text = actions_path.read_text(encoding="utf-8")
     assert 'data-strix-action="widget.navigate"' in actions_text
     assert 'data-strix-action="chat.send"' in actions_text
+    assert 'data-strix-action="conversation.continue"' in actions_text
     assert "window.strix" in actions_text
     assert "window.parent.postMessage" in actions_text
     assert 'strix: "v1"' in actions_text

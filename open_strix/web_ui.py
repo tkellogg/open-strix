@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -9,6 +10,7 @@ from uuid import uuid4
 
 from aiohttp import ClientError, ClientSession, web
 from aiohttp.web_request import FileField
+from langchain_core.messages import messages_from_dict, messages_to_dict
 
 from .models import AgentEvent
 from .ops_dashboard import (
@@ -29,6 +31,8 @@ if TYPE_CHECKING:
 WEB_UI_CHANNEL_NAME = "Local Web"
 WEB_UI_AUTHOR = "local_user"
 WEB_UI_AUTHOR_ID = "local-web-user"
+WEB_CONTINUATION_CONTEXT_WAIT_SECONDS = 30.0
+WEB_CONTINUATION_CONTEXT_WAIT_INTERVAL_SECONDS = 0.1
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".heic", ".svg"}
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -122,6 +126,175 @@ class WebChatMixin:
                 author_id=WEB_UI_AUTHOR_ID,
                 attachment_names=attachment_names,
                 source_id=message_id,
+            ),
+        )
+        return message_id
+
+    def _web_continuation_cache(self) -> dict[str, list[Any]]:
+        cache = getattr(self, "_web_continuation_context", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._web_continuation_context = cache
+        return cache
+
+    def _web_continuation_dir(self) -> Path:
+        return self.layout.logs_dir / "web-continuations"
+
+    def _web_continuation_path(self, message_id: str) -> Path:
+        return self._web_continuation_dir() / f"{quote(message_id, safe='')}.json"
+
+    def _persist_web_continuation_context(self, message_id: str, messages: list[Any]) -> None:
+        payload = {
+            "version": 1,
+            "source_message_id": message_id,
+            "messages": messages_to_dict(messages),
+        }
+        target = self._web_continuation_path(message_id)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            self.log_event(
+                "web_continuation_cache_write_failed",
+                source_message_id=message_id,
+                error=str(exc),
+            )
+
+    def _load_web_continuation_context(self, message_id: str) -> list[Any] | None:
+        cache = self._web_continuation_cache()
+        cached = cache.get(message_id)
+        if cached:
+            return list(cached)
+
+        target = self._web_continuation_path(message_id)
+        if not target.exists():
+            return None
+
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            encoded_messages = payload.get("messages") if isinstance(payload, dict) else None
+            if not isinstance(encoded_messages, list):
+                raise ValueError("continuation cache payload is missing messages")
+            messages = list(messages_from_dict(encoded_messages))
+        except Exception as exc:
+            self.log_event(
+                "web_continuation_cache_read_failed",
+                source_message_id=message_id,
+                path=str(target),
+                error=str(exc),
+            )
+            return None
+
+        cache[message_id] = messages
+        return list(messages)
+
+    def _web_continuation_context_is_pending(self, message_id: str) -> bool:
+        sent_messages = getattr(self, "_current_turn_sent_messages", None) or []
+        return any(
+            sent_message_id == message_id and self.is_local_web_channel(channel_id)
+            for channel_id, sent_message_id in sent_messages
+        )
+
+    async def _await_web_continuation_context(self, message_id: str) -> list[Any] | None:
+        continuation_messages = self._load_web_continuation_context(message_id)
+        if continuation_messages:
+            return continuation_messages
+        if not self._web_continuation_context_is_pending(message_id):
+            return None
+
+        self.log_event("web_continue_context_wait", source_message_id=message_id)
+        deadline = time.monotonic() + WEB_CONTINUATION_CONTEXT_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            await asyncio.sleep(WEB_CONTINUATION_CONTEXT_WAIT_INTERVAL_SECONDS)
+            continuation_messages = self._load_web_continuation_context(message_id)
+            if continuation_messages:
+                return continuation_messages
+            if not self._web_continuation_context_is_pending(message_id):
+                return None
+
+        self.log_event("web_continue_context_wait_timeout", source_message_id=message_id)
+        return None
+
+    def cache_web_continuation_context(
+        self,
+        *,
+        message_ids: list[str],
+        messages: list[Any],
+    ) -> None:
+        if not message_ids or not messages:
+            return
+        cache = self._web_continuation_cache()
+        for message_id in message_ids:
+            if message_id:
+                cache[message_id] = list(messages)
+                self._persist_web_continuation_context(message_id, list(messages))
+        while len(cache) > 200:
+            oldest = next(iter(cache))
+            cache.pop(oldest, None)
+
+    async def handle_web_continue(
+        self,
+        *,
+        source_message_id: str,
+        text: str,
+        uploads: list[FileField] | None = None,
+    ) -> str:
+        normalized_source = source_message_id.strip()
+        if not normalized_source:
+            raise ValueError("source_message_id is required")
+        continuation_messages = await self._await_web_continuation_context(normalized_source)
+        if not continuation_messages:
+            raise ValueError(
+                "conversation continuation context is not available; "
+                "regenerate the HTML control from a new agent reply"
+            )
+
+        message_id = self._new_web_message_id()
+        normalized_text = text.strip()
+        attachment_names = await self._store_web_uploads(uploads or [], message_id=message_id)
+        if not normalized_text and not attachment_names:
+            raise ValueError("message text or at least one attachment is required")
+
+        prompt = normalized_text or "User continued the conversation with no text."
+        if attachment_names:
+            attachment_lines = "\n".join(f"- {name}" for name in attachment_names)
+            prompt = f"{prompt}\n\nAttachments:\n{attachment_lines}"
+
+        self._remember_message(
+            channel_id=self.config.web_ui_channel_id,
+            author=WEB_UI_AUTHOR,
+            content=normalized_text,
+            attachment_names=attachment_names,
+            message_id=message_id,
+            is_bot=False,
+            source="web",
+        )
+        self.log_event(
+            "web_continue",
+            channel_id=self.config.web_ui_channel_id,
+            author=WEB_UI_AUTHOR,
+            author_id=WEB_UI_AUTHOR_ID,
+            channel_name=WEB_UI_CHANNEL_NAME,
+            channel_conversation_type="dm",
+            channel_visibility="private",
+            attachment_names=attachment_names,
+            source_id=message_id,
+            continuation_source_id=normalized_source,
+            content=prompt,
+        )
+        await self.enqueue_event(
+            AgentEvent(
+                event_type="web_continue",
+                prompt=prompt,
+                channel_id=self.config.web_ui_channel_id,
+                channel_name=WEB_UI_CHANNEL_NAME,
+                channel_conversation_type="dm",
+                channel_visibility="private",
+                author=WEB_UI_AUTHOR,
+                author_id=WEB_UI_AUTHOR_ID,
+                attachment_names=attachment_names,
+                source_id=message_id,
+                continuation_messages=list(continuation_messages),
             ),
         )
         return message_id
@@ -1400,7 +1573,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }}
 
       function isKnownStrixAction(action) {{
-        return action === "widget.navigate" || action === "chat.send";
+        return action === "widget.navigate" || action === "chat.send" || action === "conversation.continue";
       }}
 
       function registerHtmlMessageFrame(frame) {{
@@ -1479,12 +1652,15 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         }};
       }}
 
-      function htmlMessageBridgeSource() {{
-        return "(" + function () {{
+      function htmlMessageBridgeSource(messageId) {{
+        return "(" + function (sourceMessageId) {{
           const STRIX_VERSION = "v1";
 
           function post(payload) {{
-            window.parent.postMessage(Object.assign({{}}, payload || {{}}, {{ strix: STRIX_VERSION }}), "*");
+            window.parent.postMessage(
+              Object.assign({{}}, payload || {{}}, {{ strix: STRIX_VERSION, sourceMessageId }}),
+              "*",
+            );
           }}
 
           function closestElement(target, selector) {{
@@ -1501,7 +1677,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           }}
 
           function isKnownAction(action) {{
-            return action === "widget.navigate" || action === "chat.send";
+            return action === "widget.navigate" || action === "chat.send" || action === "conversation.continue";
           }}
 
           function firstStringFormValue(formData, names) {{
@@ -1590,6 +1766,9 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
             sendMessage(message) {{
               post({{ action: "chat.send", message }});
             }},
+            continue(message) {{
+              post({{ action: "conversation.continue", message }});
+            }},
             resize,
           }});
 
@@ -1664,13 +1843,13 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
             if (document.body) observer.observe(document.body);
           }}
           window.setTimeout(resize, 0);
-        }}.toString() + ")();";
+        }}.toString() + ")(" + JSON.stringify(messageId || "") + ");";
       }}
 
-      function htmlWithBridge(html) {{
+      function htmlWithBridge(html, messageId) {{
         const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
         const script = doc.createElement("script");
-        script.textContent = htmlMessageBridgeSource();
+        script.textContent = htmlMessageBridgeSource(messageId);
         doc.body.appendChild(script);
         return "<!doctype html>" + doc.documentElement.outerHTML;
       }}
@@ -1696,6 +1875,28 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         return true;
       }}
 
+      async function postWebConversationContinue(text, files = [], sourceMessageId = "") {{
+        const normalized = String(text ?? "").trim();
+        const uploadFiles = Array.from(files || []).filter(Boolean);
+        if (!sourceMessageId || (!normalized && uploadFiles.length === 0)) return false;
+        void requestNotificationPermission();
+        const body = new FormData();
+        body.set("text", text);
+        body.set("source_message_id", sourceMessageId);
+        uploadFiles.forEach((file) => body.append("files", file));
+        const response = await fetch("/api/messages/continue", {{
+          method: "POST",
+          body,
+        }});
+        if (!response.ok) {{
+          const payload = await response.json().catch(() => ({{ error: response.statusText }}));
+          throw new Error(payload.error || "conversation continue failed");
+        }}
+        isNearBottom = true;
+        await refresh();
+        return true;
+      }}
+
       async function runStrixAction(payload) {{
         const action = String(payload && payload.action || "");
         if (action === "widget.navigate") {{
@@ -1707,6 +1908,13 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         }}
         if (action === "chat.send") {{
           return await postWebChatMessage(payload.message || "", payload.files || []);
+        }}
+        if (action === "conversation.continue") {{
+          return await postWebConversationContinue(
+            payload.message || "",
+            payload.files || [],
+            payload.sourceMessageId || "",
+          );
         }}
         return false;
       }}
@@ -1809,6 +2017,13 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           return;
         }}
         if (!isKnownStrixAction(payload.action)) return;
+        if (payload.action === "conversation.continue") {{
+          if (!htmlFrame) return;
+          dispatchStrixAction(Object.assign({{}}, payload, {{
+            sourceMessageId: htmlFrame.dataset.messageId || "",
+          }}));
+          return;
+        }}
         dispatchStrixAction(payload);
       }});
 
@@ -2317,6 +2532,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           if (message.format === "html") {{
             const frame = document.createElement("iframe");
             frame.className = "html-body";
+            frame.dataset.messageId = message.message_id || "";
             frame.setAttribute("sandbox", "allow-scripts allow-forms");
             frame.style.border = "none";
             frame.style.width = "100%";
@@ -2326,7 +2542,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
             }});
             body.appendChild(frame);
             registerHtmlMessageFrame(frame);
-            frame.setAttribute("srcdoc", htmlWithBridge(message.content || ""));
+            frame.setAttribute("srcdoc", htmlWithBridge(message.content || "", message.message_id || ""));
           }} else {{
             body.innerHTML = simpleMarkdown(message.content);
           }}
@@ -2676,6 +2892,40 @@ def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
             },
         )
 
+    async def post_continue(request: web.Request) -> web.Response:
+        if request.content_type.startswith("application/json"):
+            body = await request.json()
+            text = str(body.get("text", ""))
+            source_message_id = str(body.get("source_message_id", ""))
+            uploads: list[FileField] = []
+        else:
+            form = await request.post()
+            text = str(form.get("text", ""))
+            source_message_id = str(form.get("source_message_id", ""))
+            uploads = [
+                value
+                for value in form.values()
+                if isinstance(value, FileField) and bool(getattr(value, "filename", ""))
+            ]
+
+        try:
+            message_id = await strix.handle_web_continue(
+                source_message_id=source_message_id,
+                text=text,
+                uploads=uploads,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+        return web.json_response(
+            {
+                "status": "queued",
+                "channel_id": strix.config.web_ui_channel_id,
+                "message_id": message_id,
+                "continuation_source_id": source_message_id,
+            },
+        )
+
     async def serve_file(request: web.Request) -> web.StreamResponse:
         virtual_path = request.match_info.get("path", "")
         target = strix.resolve_web_shared_file(virtual_path)
@@ -2794,6 +3044,7 @@ def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/messages", list_messages)
     app.router.add_post("/api/messages", post_message)
+    app.router.add_post("/api/messages/continue", post_continue)
     app.router.add_get("/api/uis", list_uis)
     app.router.add_route("*", "/ui/{name}/", proxy_ui)
     app.router.add_route("*", "/ui/{name}/{path:.*}", proxy_ui)

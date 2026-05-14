@@ -42,7 +42,7 @@ Communication:
 HTML messages (web UI only):
 - The `send_message` tool accepts a `format` parameter (default `markdown`). Pass `format="html"` when you want to render rich content — data tables, styled cards, layered SVG, dashboards — that exceeds what markdown can express. The content is rendered inside a sandboxed iframe in the local web UI.
 - HTML messages are NOT supported on Discord channels. Sending `format="html"` to a Discord channel returns an error; fall back to `format="markdown"` for those channels.
-- HTML messages run in an iframe sandboxed with `allow-scripts allow-forms` and without `allow-same-origin`. Scripts and forms work, but the frame has an opaque origin; use `data-strix-action` or `window.strix` from the `ui` skill for parent-owned actions.
+- HTML messages run in an iframe sandboxed with `allow-scripts allow-forms` and without `allow-same-origin`. Scripts and forms work, but the frame has an opaque origin; use `data-strix-action` or `window.strix` from the `ui` skill for parent-owned actions, including `conversation.continue` when the HTML reply should resume the exact agent context that produced it.
 - **The chat surface is light (warm cream).** The agent message bubble background is approximately `rgba(255, 250, 241, 0.84)` over a `#efe4cf → #f7f2e7` gradient. The iframe itself is transparent — your HTML renders directly on top of that cream/off-white surface. Plan for it: either (a) use dark text (e.g. `#1a1a2e`, `#222`, dark grays) on the inherited cream background, or (b) paint your own opaque background on `html, body` (full-bleed, not just on cards) so contrast is fully under your control. Do not assume a dark canvas — light text on the default cream is unreadable.
 
 Memory:

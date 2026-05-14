@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 import open_strix.app as app_mod
 
@@ -117,3 +117,77 @@ def test_turn_timing_emitted_even_when_agent_raises(tmp_path: Path, monkeypatch)
     assert timing["agent_invoke_seconds"] == 0.0
     assert timing["repair_invoke_count"] == 0
     assert timing["total_seconds"] >= timing["context_load_seconds"]
+
+
+def test_process_event_continuation_reuses_prior_agent_messages(tmp_path: Path, monkeypatch) -> None:
+    class CapturingAgent(DummyAgent):
+        def __init__(self) -> None:
+            super().__init__()
+            self.payload: dict[str, Any] | None = None
+
+        async def ainvoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+            self.payload = payload
+            return await super().ainvoke(payload)
+
+    agent = CapturingAgent()
+    app = _build_app(tmp_path, monkeypatch, agent=agent)
+    prior = [HumanMessage(content="original in-flight context")]
+
+    asyncio.run(
+        app._process_event(
+            app_mod.AgentEvent(
+                event_type="web_continue",
+                prompt="continue here",
+                channel_id="local-web",
+                author="local_user",
+                continuation_messages=prior,
+            ),
+        ),
+    )
+
+    assert agent.payload is not None
+    messages = agent.payload["messages"]
+    assert messages[:-1] == prior
+    assert messages[-1].content == "continue here"
+
+
+def test_process_event_caches_sent_web_message_continuation(tmp_path: Path, monkeypatch) -> None:
+    class SendingAgent(DummyAgent):
+        def __init__(self) -> None:
+            super().__init__()
+            self.app: app_mod.OpenStrixApp | None = None
+            self.sent_message_id: str | None = None
+            self.result_messages = [
+                HumanMessage(content="original web prompt"),
+                AIMessage(content="sent an HTML resume control"),
+            ]
+
+        async def ainvoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+            assert self.app is not None
+            sent, message_id, _chunks = await self.app._send_web_message(
+                channel_id="local-web",
+                text="<button data-strix-action='conversation.continue'>Continue</button>",
+                format="html",
+            )
+            assert sent is True
+            self.sent_message_id = message_id
+            return {"messages": self.result_messages}
+
+    agent = SendingAgent()
+    app = _build_app(tmp_path, monkeypatch, agent=agent)
+    agent.app = app
+
+    asyncio.run(
+        app._process_event(
+            app_mod.AgentEvent(
+                event_type="web_message",
+                prompt="start a resumable HTML reply",
+                channel_id="local-web",
+                author="local_user",
+            ),
+        ),
+    )
+
+    assert agent.sent_message_id is not None
+    assert app._web_continuation_path(agent.sent_message_id).exists()
+    assert app._load_web_continuation_context(agent.sent_message_id) == agent.result_messages
