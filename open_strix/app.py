@@ -409,9 +409,6 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self.supervisor = Supervisor(self.layout.state_dir / "climbers")
         self._draining = False
         self.mcp_manager: MCPManager | None = None
-        # Per-model agent cache for scheduler jobs that specify a custom model.
-        # Keyed by the provider-qualified model string; invalidated on reload.
-        self._scheduler_agent_cache: dict[str, Any] = {}
         self.agent = self._create_agent()
 
     def _load_chat_history(self) -> None:
@@ -957,26 +954,14 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         return errors
 
     def _get_agent_for_scheduler_model(self, model_name: str) -> Any:
-        """Return a cached (or freshly built) agent for a per-job model override.
+        """Build a fresh agent for a per-job model override.
 
-        The cache is keyed on the provider-qualified model string and is scoped
-        to the lifetime of the agent process (dropped on config reload).  Build
-        cost is paid once per distinct model string, not per scheduler firing.
+        A new agent is built on each scheduler firing — build cost is a few ms
+        and is acceptable for jobs that fire no faster than once per minute.
+        Caching is intentionally omitted: open-strix does not cache as a rule
+        and the precedent cost of an idiom-of-one cache exceeds the build savings.
         """
-        if model_name not in self._scheduler_agent_cache:
-            self._scheduler_agent_cache[model_name] = self._create_agent(
-                model_override=model_name
-            )
-        return self._scheduler_agent_cache[model_name]
-
-    def _reload_scheduler_jobs(self) -> None:
-        """Reload scheduler jobs and invalidate the per-model agent cache.
-
-        The cache is cleared unconditionally so stale agents from a previous
-        config are never reused after a hot reload.
-        """
-        self._scheduler_agent_cache.clear()
-        super()._reload_scheduler_jobs()
+        return self._create_agent(model_override=model_name)
 
     async def _process_event(self, event: AgentEvent) -> None:
         self._current_turn_sent_messages = []

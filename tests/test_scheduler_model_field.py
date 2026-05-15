@@ -152,14 +152,13 @@ class TestLoadSchedulerJobsModel:
         assert jobs[0].model is None
 
 
-# ── _get_agent_for_scheduler_model / cache ────────────────────────────────
+# ── _get_agent_for_scheduler_model (no-cache, fresh build each turn) ────────
 
 
 class FakeOpenStrixApp:
-    """Minimal stub that exercises the cache logic without the full app stack."""
+    """Minimal stub that exercises the no-cache build logic without the full app stack."""
 
     def __init__(self) -> None:
-        self._scheduler_agent_cache: dict[str, Any] = {}
         self._create_agent_calls: list[str | None] = []
 
     def _create_agent(self, model_override: str | None = None) -> MagicMock:
@@ -169,26 +168,23 @@ class FakeOpenStrixApp:
         return agent
 
     def _get_agent_for_scheduler_model(self, model_name: str) -> Any:
-        if model_name not in self._scheduler_agent_cache:
-            self._scheduler_agent_cache[model_name] = self._create_agent(
-                model_override=model_name
-            )
-        return self._scheduler_agent_cache[model_name]
-
-    def _reload_scheduler_jobs(self) -> None:
-        self._scheduler_agent_cache.clear()
+        return self._create_agent(model_override=model_name)
 
 
-class TestAgentCache:
-    def test_cache_hit_returns_same_instance(self) -> None:
-        """Repeated calls with the same model string return the same agent object."""
+class TestAgentBuild:
+    def test_each_call_builds_fresh_agent(self) -> None:
+        """Every _get_agent_for_scheduler_model call returns a freshly built agent.
+
+        No cache means two calls with the same model string produce distinct
+        objects — intentional; open-strix does not cache as a rule.
+        """
         app = FakeOpenStrixApp()
         first = app._get_agent_for_scheduler_model("anthropic:claude-haiku-4-5")
         second = app._get_agent_for_scheduler_model("anthropic:claude-haiku-4-5")
-        assert first is second
-        assert len(app._create_agent_calls) == 1
+        assert first is not second  # fresh build each time
+        assert len(app._create_agent_calls) == 2
 
-    def test_cache_miss_calls_create_agent(self) -> None:
+    def test_different_models_build_separate_agents(self) -> None:
         """Distinct model strings each trigger a separate _create_agent call."""
         app = FakeOpenStrixApp()
         haiku = app._get_agent_for_scheduler_model("anthropic:claude-haiku-4-5")
@@ -199,15 +195,11 @@ class TestAgentCache:
             "anthropic:claude-sonnet-4-6",
         ]
 
-    def test_reload_scheduler_jobs_clears_cache(self) -> None:
-        """_reload_scheduler_jobs drops all cached agents; next call rebuilds."""
+    def test_build_passes_model_override_to_create_agent(self) -> None:
+        """The model string is forwarded as model_override to _create_agent."""
         app = FakeOpenStrixApp()
-        before = app._get_agent_for_scheduler_model("anthropic:claude-haiku-4-5")
-        app._reload_scheduler_jobs()
-        assert app._scheduler_agent_cache == {}
-        after = app._get_agent_for_scheduler_model("anthropic:claude-haiku-4-5")
-        assert before is not after  # rebuilt after cache clear
-        assert len(app._create_agent_calls) == 2
+        app._get_agent_for_scheduler_model("anthropic:claude-haiku-4-5")
+        assert app._create_agent_calls == ["anthropic:claude-haiku-4-5"]
 
 
 # ── _on_scheduler_fire ────────────────────────────────────────────────────
