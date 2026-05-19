@@ -425,3 +425,115 @@ async def test_lifecycle_hooks_run_from_open_strix_app(
         "pre_shutdown",
         "post_shutdown",
     ]
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_hook_can_block_with_synthetic_result(tmp_home: Path) -> None:
+    """A pre_tool_call hook may return `_block` to short-circuit the call.
+
+    The wrapped tool MUST NOT be invoked. The synthetic `result` is returned
+    to the agent as if it were the tool's own return value. A
+    `hook_blocked_tool_call` event is logged and post_tool_call hooks see
+    `status="blocked"` with the same synthetic result.
+    """
+    skill_dir = tmp_home / "skills" / "blocker"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "hook.py").write_text(
+        "import json, sys\n"
+        "event = json.loads(sys.stdin.readline())\n"
+        "if event['type'] == 'pre_tool_call' and event.get('tool') == 'echo':\n"
+        "    event['_block'] = {\n"
+        "        'reason': 'test-block',\n"
+        "        'result': 'BLOCKED: do not call echo',\n"
+        "    }\n"
+        "print(json.dumps(event))\n",
+        encoding="utf-8",
+    )
+    write_hooks_json(
+        skill_dir,
+        {
+            "hooks": [
+                {
+                    "name": "blocker",
+                    "command": python_command("hook.py"),
+                    "events": ["pre_tool_call", "post_tool_call"],
+                },
+            ],
+        },
+    )
+
+    invocations: list[str] = []
+
+    @tool("echo")
+    async def echo(text: str) -> str:
+        """Echo text."""
+        invocations.append(text)
+        return text
+
+    app = FakeApp(tmp_home)
+    manager = HookManager(app)
+    manager.discover()
+    hooked = manager.wrap_tool(echo)
+
+    result = await hooked.ainvoke({"text": "hello"})
+
+    # Wrapped tool was NOT invoked; agent sees the synthetic result.
+    assert invocations == []
+    assert result == "BLOCKED: do not call echo"
+
+    # hook_blocked_tool_call was logged.
+    block_events = [e for e in app.events if e["type"] == "hook_blocked_tool_call"]
+    assert len(block_events) == 1
+    assert block_events[0]["tool"] == "echo"
+    assert block_events[0]["reason"] == "test-block"
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_invalid_block_falls_through(tmp_home: Path) -> None:
+    """An invalid `_block` (missing fields, wrong types) is logged and ignored.
+
+    The wrapped tool runs normally and the agent gets the real result. This
+    guards against accidental silent drops from malformed hook output.
+    """
+    skill_dir = tmp_home / "skills" / "bad-block"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "hook.py").write_text(
+        "import json, sys\n"
+        "event = json.loads(sys.stdin.readline())\n"
+        "if event['type'] == 'pre_tool_call':\n"
+        # Missing 'result' field — invalid spec.
+        "    event['_block'] = {'reason': 'incomplete'}\n"
+        "print(json.dumps(event))\n",
+        encoding="utf-8",
+    )
+    write_hooks_json(
+        skill_dir,
+        {
+            "hooks": [
+                {
+                    "name": "bad-block",
+                    "command": python_command("hook.py"),
+                    "events": ["pre_tool_call"],
+                },
+            ],
+        },
+    )
+
+    @tool("echo")
+    async def echo(text: str) -> str:
+        """Echo text."""
+        return text
+
+    app = FakeApp(tmp_home)
+    manager = HookManager(app)
+    manager.discover()
+    hooked = manager.wrap_tool(echo)
+
+    result = await hooked.ainvoke({"text": "hello"})
+
+    # Wrapped tool ran normally.
+    assert result == "hello"
+    # Invalid-block event was logged.
+    invalid_events = [e for e in app.events if e["type"] == "hook_invalid_block"]
+    assert len(invalid_events) == 1
+    assert invalid_events[0]["tool"] == "echo"

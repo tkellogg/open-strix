@@ -352,6 +352,55 @@ class HookManager:
                     "current_event": getattr(hooks.strix, "current_event_label", None),
                 },
             )
+            # Pre-tool-call BLOCK verb: a hook may return `_block` to short-circuit
+            # the tool call. The wrapped tool is NOT invoked. Instead, the agent
+            # sees `_block.result` as the tool's return value (just like a normal
+            # tool result), and a `hook_blocked_tool_call` event is logged.
+            #
+            # Shape:
+            #   {"_block": {"reason": "<short id>", "result": "<text to agent>"}}
+            #
+            # Both `reason` and `result` are required strings. Invalid specs are
+            # logged via `hook_invalid_block` and the call proceeds normally.
+            #
+            # Why a new verb: the prior contract only allowed args mutation, so a
+            # hook that wanted to reject a bad call had to mutate args into a
+            # diagnostic payload — which then actually executed (e.g. a
+            # `send_message` diagnostic still shipped to the channel). With
+            # `_block`, the call is suppressed and the diagnostic goes back to
+            # the agent as the tool result instead. Born 2026-05-19 from Tim's
+            # ask after the send-message-shell-leak-block hook's mutate-to-
+            # diagnostic shape leaked into chat.
+            block_spec = pre_event.get("_block")
+            if isinstance(block_spec, dict):
+                reason = block_spec.get("reason")
+                synthetic_result = block_spec.get("result")
+                if isinstance(reason, str) and isinstance(synthetic_result, str):
+                    hooks.strix.log_event(
+                        "hook_blocked_tool_call",
+                        tool=tool_name,
+                        reason=reason,
+                        channel_id=getattr(hooks.strix, "current_channel_id", None),
+                    )
+                    await hooks.run_event(
+                        "post_tool_call",
+                        {
+                            "tool": tool_name,
+                            "args": pre_event.get("args", kwargs),
+                            "status": "blocked",
+                            "block_reason": reason,
+                            "result": synthetic_result,
+                            "channel_id": getattr(hooks.strix, "current_channel_id", None),
+                            "current_event": getattr(hooks.strix, "current_event_label", None),
+                        },
+                    )
+                    return synthetic_result
+                hooks.strix.log_event(
+                    "hook_invalid_block",
+                    tool=tool_name,
+                    error="'_block' must be an object with string 'reason' and 'result' fields",
+                )
+
             next_args = pre_event.get("args", kwargs)
             if not isinstance(next_args, dict):
                 hooks.strix.log_event(

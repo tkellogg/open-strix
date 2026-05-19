@@ -81,6 +81,29 @@ Output:
 
 For `pre_tool_call`, returning an event with an `args` object changes the tool args before execution. For `post_tool_call`, returning an event with `result` changes the result shown to the agent after a successful tool call. For `pre_prompt`, returning `prompt` replaces the prompt, and returning `append_prompt` appends text to the prompt.
 
+### Blocking a tool call with `_block`
+
+A `pre_tool_call` hook may **reject the call entirely** by returning an event with an `_block` object:
+
+```python
+import json
+import sys
+
+event = json.loads(sys.stdin.readline())
+if event.get("tool") == "send_message" and looks_bad(event["args"]):
+    event["_block"] = {
+        "reason": "shell-leak-prefix",
+        "result": "[hook blocked] send_message text starts with `$(...)` — that ships as a literal string, not a shell command. Read the file and inline the contents, or attach via attachment_paths.",
+    }
+print(json.dumps(event))
+```
+
+When `_block` is set with both `reason` (string) and `result` (string), the wrapped tool is **not invoked**. The agent receives `result` as if it were the tool's own return value — so the agent sees the diagnostic next turn and can self-correct. A `hook_blocked_tool_call` event is logged, and post_tool_call hooks see `status="blocked"` with the same synthetic result.
+
+This is the right verb when a hook needs to **prevent** a bad call rather than mutate it. Args-mutation is fine when the call should still happen but with different inputs; `_block` is for "this call must not happen — tell the agent why."
+
+Invalid `_block` specs (missing fields, wrong types) are logged via `hook_invalid_block` and the call proceeds normally. This guards against silent drops from malformed hook output.
+
 Set `include_conversation: true` only for hooks that need transcript context. The hook event then includes:
 
 - `conversation.all_messages`
@@ -108,6 +131,9 @@ Check `logs/events.jsonl` for:
 - `hook_exec_error`
 - `hook_stderr`
 - `hook_nonzero_exit`
+- `hook_blocked_tool_call`
+- `hook_invalid_block`
+- `hook_invalid_mutation`
 - `hook_invalid_output`
 - `hook_invalid_mutation`
 
