@@ -79,6 +79,10 @@ def test_web_ui_page_includes_markdown_assets_and_styles(tmp_path: Path) -> None
     assert ".body table" in page
     assert ".body th" in page
     assert ".body td" in page
+    assert ':root[data-theme="dark"]' in page
+    assert 'id="theme-toggle"' in page
+    assert 'localStorage.setItem("open-strix-theme", nextTheme)' in page
+    assert 'prefers-color-scheme: dark' in page
 
 
 def test_web_ui_page_refresh_updates_existing_message_reactions_without_replacing_nodes(tmp_path: Path) -> None:

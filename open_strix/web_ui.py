@@ -450,6 +450,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
     <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
     <style>
       :root {{
+        color-scheme: light;
         --paper: #f5efe3;
         --paper-strong: #fffaf1;
         --ink: #1e2430;
@@ -459,7 +460,41 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         --accent-soft: rgba(13, 118, 110, 0.12);
         --agent: #d9ece8;
         --user: #fffdf8;
+        --shell: rgba(255, 250, 241, 0.84);
+        --panel: rgba(255, 250, 241, 0.9);
+        --panel-title: #ecdfc6;
+        --field-border: rgba(30, 36, 48, 0.16);
+        --focus-ring: rgba(13, 118, 110, 0.14);
+        --drop-border: rgba(30, 36, 48, 0.24);
+        --card-shadow: 0 12px 28px rgba(44, 54, 64, 0.08);
         --shadow: 0 22px 60px rgba(44, 54, 64, 0.12);
+        --page-bg:
+          radial-gradient(circle at top left, rgba(13, 118, 110, 0.08), transparent 32rem),
+          linear-gradient(180deg, #efe4cf 0%, #f7f2e7 36%, #f5efe3 100%);
+      }}
+
+      :root[data-theme="dark"] {{
+        color-scheme: dark;
+        --paper: #101820;
+        --paper-strong: #17212b;
+        --ink: #eef5f1;
+        --muted: #a7b6bd;
+        --line: rgba(238, 245, 241, 0.14);
+        --accent: #4fd1c5;
+        --accent-soft: rgba(79, 209, 197, 0.16);
+        --agent: #173d3d;
+        --user: #202b36;
+        --shell: rgba(23, 33, 43, 0.9);
+        --panel: rgba(23, 33, 43, 0.92);
+        --panel-title: #22313f;
+        --field-border: rgba(238, 245, 241, 0.18);
+        --focus-ring: rgba(79, 209, 197, 0.2);
+        --drop-border: rgba(238, 245, 241, 0.24);
+        --card-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+        --shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+        --page-bg:
+          radial-gradient(circle at top left, rgba(79, 209, 197, 0.14), transparent 32rem),
+          linear-gradient(180deg, #08111a 0%, #101820 44%, #0d141b 100%);
       }}
 
       * {{
@@ -470,9 +505,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         margin: 0;
         height: 100%;
         overflow: hidden;
-        background:
-          radial-gradient(circle at top left, rgba(13, 118, 110, 0.08), transparent 32rem),
-          linear-gradient(180deg, #efe4cf 0%, #f7f2e7 36%, #f5efe3 100%);
+        background: var(--page-bg);
         color: var(--ink);
         font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }}
@@ -531,8 +564,8 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         overflow: hidden;
         border: 1px solid var(--line);
         border-radius: 0.7rem;
-        background: rgba(255, 250, 241, 0.9);
-        box-shadow: 0 12px 28px rgba(44, 54, 64, 0.08);
+        background: var(--panel);
+        box-shadow: var(--card-shadow);
         display: flex;
         flex-direction: column;
         flex: 0 0 auto;
@@ -553,7 +586,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         align-items: center;
         gap: 0.5rem;
         padding: 0.45rem 0.55rem 0.45rem 0.75rem;
-        background: #ecdfc6;
+        background: var(--panel-title);
         border-bottom: 1px solid var(--line);
       }}
 
@@ -581,9 +614,9 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         width: 1.8rem;
         height: 1.8rem;
         padding: 0;
-        border: 1px solid rgba(30, 36, 48, 0.14);
+        border: 1px solid var(--field-border);
         border-radius: 0.45rem;
-        background: rgba(255, 250, 241, 0.76);
+        background: var(--paper-strong);
         color: var(--ink);
         line-height: 1;
       }}
@@ -621,7 +654,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         width: 100%;
         height: 100%;
         border: 0;
-        background: white;
+        background: var(--paper-strong);
       }}
 
       .ui-placeholder {{
@@ -690,7 +723,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       .ui-modal-head {{
         margin: 0;
         padding: 0.6rem 0.7rem 0.6rem 1rem;
-        background: #ecdfc6;
+        background: var(--panel-title);
         border-bottom: 1px solid var(--line);
       }}
 
@@ -704,8 +737,8 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         margin: 0 auto;
         display: grid;
         grid-template-rows: auto 1fr auto;
-        background: rgba(255, 250, 241, 0.84);
-        border: 1px solid rgba(255, 255, 255, 0.5);
+        background: var(--shell);
+        border: 1px solid var(--line);
         border-radius: 1.5rem;
         box-shadow: var(--shadow);
         backdrop-filter: blur(10px);
@@ -721,10 +754,25 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         gap: 1rem;
       }}
 
+      .header-main {{
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        min-width: 0;
+      }}
+
       .title {{
         margin: 0;
         font-size: clamp(1.2rem, 2vw, 1.65rem);
         line-height: 1.1;
+      }}
+
+      .header-actions {{
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
       }}
 
       .header-links {{
@@ -740,6 +788,25 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       .header-links a:hover {{
         text-decoration: underline;
+      }}
+
+      .theme-toggle {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.42rem 0.7rem;
+        border: 1px solid var(--line);
+        background: var(--paper-strong);
+        color: var(--ink);
+        font-size: 0.84rem;
+        line-height: 1;
+      }}
+
+      .theme-toggle:hover,
+      .theme-toggle:focus-visible {{
+        background: var(--accent-soft);
+        color: var(--accent);
+        outline: none;
       }}
 
       .status-row {{
@@ -876,7 +943,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         padding: 1.2rem;
         text-align: center;
         color: var(--muted);
-        background: rgba(255, 255, 255, 0.45);
+        background: var(--panel);
         border: 1px dashed var(--line);
         border-radius: 1rem;
       }}
@@ -989,7 +1056,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         margin: 0.75rem 0;
         padding: 0.55rem 0.8rem;
         border-left: 0.24rem solid var(--accent);
-        background: rgba(255, 255, 255, 0.48);
+        background: var(--panel);
         color: var(--muted);
         border-radius: 0 0.7rem 0.7rem 0;
       }}
@@ -1007,7 +1074,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         margin: 0.75rem 0;
         border: 1px solid var(--line);
         border-radius: 0.75rem;
-        background: rgba(255, 255, 255, 0.5);
+        background: var(--panel);
       }}
       .body th,
       .body td {{
@@ -1022,7 +1089,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         font-weight: 600;
       }}
       .body tr:nth-child(even) td {{
-        background: rgba(255, 255, 255, 0.32);
+        background: var(--accent-soft);
       }}
 
       .attachments {{
@@ -1047,9 +1114,9 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       .image {{
         width: min(100%, 25rem);
         border-radius: 0.9rem;
-        border: 1px solid rgba(30, 36, 48, 0.08);
+        border: 1px solid var(--line);
         display: block;
-        background: rgba(255, 255, 255, 0.75);
+        background: var(--paper-strong);
       }}
 
       .reactions {{
@@ -1069,7 +1136,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       .composer {{
         padding: 1rem;
         border-top: 1px solid var(--line);
-        background: rgba(255, 251, 244, 0.95);
+        background: var(--shell);
       }}
 
       .composer-form {{
@@ -1084,7 +1151,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         resize: none;
         overflow-y: auto;
         border-radius: 1rem;
-        border: 1px solid rgba(30, 36, 48, 0.16);
+        border: 1px solid var(--field-border);
         padding: 0.9rem 1rem;
         font: inherit;
         line-height: 1.4;
@@ -1096,7 +1163,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       .file-label:focus-within {{
         outline: none;
         border-color: rgba(13, 118, 110, 0.55);
-        box-shadow: 0 0 0 0.22rem rgba(13, 118, 110, 0.14);
+        box-shadow: 0 0 0 0.22rem var(--focus-ring);
       }}
 
       .composer-actions {{
@@ -1112,9 +1179,9 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         align-items: center;
         gap: 0.55rem;
         padding: 0.75rem 0.95rem;
-        border: 1px dashed rgba(30, 36, 48, 0.24);
+        border: 1px dashed var(--drop-border);
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.56);
+        background: var(--paper-strong);
         cursor: pointer;
       }}
 
@@ -1161,6 +1228,14 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           padding: 0;
         }}
 
+        .header {{
+          align-items: flex-start;
+        }}
+
+        .header-actions {{
+          gap: 0.6rem;
+        }}
+
         .app-frame {{
           height: 100vh;
         }}
@@ -1204,6 +1279,14 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         }}
       }}
     </style>
+    <script>
+      (function initializeTheme() {{
+        const savedTheme = localStorage.getItem("open-strix-theme");
+        const systemPrefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const initialTheme = savedTheme || (systemPrefersDark ? "dark" : "light");
+        document.documentElement.dataset.theme = initialTheme;
+      }})();
+    </script>
   </head>
   <body>
     <div class="app-frame" id="app-frame">
@@ -1212,11 +1295,16 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       </div>
       <main class="shell">
       <header class="header">
-        <h1 class="title">{agent_name}</h1>
-        <nav class="header-links">
-          <a href="/ops" title="Live ops dashboard">Ops</a>
-          <button class="ui-hamburger" id="ui-hamburger" type="button" aria-label="Open UI plugins" title="Open UI plugins" hidden>☰</button>
-        </nav>
+        <div class="header-main">
+          <h1 class="title">{agent_name}</h1>
+        </div>
+        <div class="header-actions">
+          <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark mode">Dark</button>
+          <nav class="header-links">
+            <a href="/ops" title="Live ops dashboard">Ops</a>
+            <button class="ui-hamburger" id="ui-hamburger" type="button" aria-label="Open UI plugins" title="Open UI plugins" hidden>☰</button>
+          </nav>
+        </div>
       </header>
 
       <section class="messages" id="messages" aria-live="polite">
@@ -1277,6 +1365,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       const fileListEl = document.getElementById("file-list");
       const sendEl = document.getElementById("send");
       const typingEl = document.getElementById("typing-indicator");
+      const themeToggleEl = document.getElementById("theme-toggle");
       const shellJobsWidgetEl = document.getElementById("shell-jobs-widget");
       const shellJobsPillEl = document.getElementById("shell-jobs-pill");
       const shellJobsPanelEl = document.getElementById("shell-jobs-panel");
@@ -2293,6 +2382,20 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           <path d="M3.5 8.5 6.5 11.5 12.5 4.5"></path>
         </svg>`;
 
+      function updateThemeToggleLabel() {{
+        const isDark = document.documentElement.dataset.theme === "dark";
+        themeToggleEl.textContent = isDark ? "Light" : "Dark";
+        themeToggleEl.setAttribute("aria-label", isDark ? "Switch to light mode" : "Switch to dark mode");
+        themeToggleEl.setAttribute("aria-pressed", String(isDark));
+      }}
+
+      function toggleTheme() {{
+        const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = nextTheme;
+        localStorage.setItem("open-strix-theme", nextTheme);
+        updateThemeToggleLabel();
+      }}
+
       function formatTime(value) {{
         if (!value) return "";
         const dt = new Date(value);
@@ -2788,6 +2891,8 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }});
       filesEl.addEventListener("change", updateFileList);
       composerEl.addEventListener("submit", sendMessage);
+      themeToggleEl.addEventListener("click", toggleTheme);
+      updateThemeToggleLabel();
       document.addEventListener("visibilitychange", () => {{
         if (!document.hidden) {{
           clearUnreadState();
