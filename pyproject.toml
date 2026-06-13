@@ -28,6 +28,11 @@ Homepage = "https://github.com/tkellogg/open-strix"
 open-strix = "open_strix.cli:main"
 release = "open_strix.release:main"
 
+[project.optional-dependencies]
+ambient-memory = [
+    "pylate>=1.0.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

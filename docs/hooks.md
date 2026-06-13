@@ -209,7 +209,7 @@ event["append_prompt"] = "Relevant similar conversations:\n- ..."
 print(json.dumps(event))
 ```
 
-This is the intended OOB retrieval path: a `pre_prompt` hook can read the conversation, run a local vector search, and append relevant context before the agent spends any tool calls.
+For hook-based OOB retrieval, a `pre_prompt` hook can read the conversation, run a local search, and append relevant context before the agent spends any tool calls.
 
 ## Lifecycle Events
 
@@ -240,6 +240,7 @@ The tool re-scans all `skills/**/hooks.json` files. Already wrapped tools refere
 ## Design Notes
 
 - Hooks are ordered by sorted `hooks.json` path, then by entry order within each file.
+- Ambient memory, when enabled, runs inside open-strix rather than as a command hook. Prompt injection happens after `pre_prompt` hook mutations. Tool-result injection happens after successful `post_tool_call` hook mutations and never applies to blocked or error calls.
 - Each hook command is short-lived. Long-running daemons should be UI plugins, supervisor jobs, OS services, or pollers.
 - Hooks run for all registered event types. Keep filtering in the script explicit.
 - Keep hook output to one JSON object. Log debugging details to stderr.

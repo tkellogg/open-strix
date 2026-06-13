@@ -17,6 +17,8 @@ DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS = 600
 STATE_DIR_NAME = "state"
 DEFAULT_WEB_UI_HOST = "127.0.0.1"
 DEFAULT_WEB_UI_CHANNEL_ID = "local-web"
+DEFAULT_AMBIENT_MEMORY_MODEL = "lightonai/GTE-ModernColBERT-v1"
+DEFAULT_AMBIENT_MEMORY_INDEX_DIR = "logs/ambient-memory"
 
 DEFAULT_FOLDERS: dict[str, str] = {
     "state": "rw",
@@ -39,6 +41,26 @@ api_port: 0
 web_ui_port: 8084
 web_ui_host: 127.0.0.1
 web_ui_channel_id: local-web
+ambient_memory:
+  enabled: false
+  backend: pylate
+  model: lightonai/GTE-ModernColBERT-v1
+  index_dir: logs/ambient-memory
+  include_state: true
+  include_journal: true
+  include_chat_history: true
+  include_events: false
+  max_results: 3
+  snippet_words: 12
+  min_score: null
+  candidate_limit: 100
+  refresh_interval_seconds: 300
+  retrieval_timeout_seconds: 2
+  indexing_timeout_seconds: 120
+  result_ttl_seconds: 60
+  max_tool_result_bytes: 16000
+  prompt_injection: true
+  tool_result_injection: true
 folders:
   state: rw
   skills: rw
@@ -206,6 +228,29 @@ class SubAgentConfig:
 
 
 @dataclass
+class AmbientMemoryConfig:
+    enabled: bool = False
+    backend: str = "pylate"
+    model: str = DEFAULT_AMBIENT_MEMORY_MODEL
+    index_dir: str = DEFAULT_AMBIENT_MEMORY_INDEX_DIR
+    include_state: bool = True
+    include_journal: bool = True
+    include_chat_history: bool = True
+    include_events: bool = False
+    max_results: int = 3
+    snippet_words: int = 12
+    min_score: float | None = None
+    candidate_limit: int = 100
+    refresh_interval_seconds: int = 300
+    retrieval_timeout_seconds: int = 2
+    indexing_timeout_seconds: int = 120
+    result_ttl_seconds: int = 60
+    max_tool_result_bytes: int = 16000
+    prompt_injection: bool = True
+    tool_result_injection: bool = True
+
+
+@dataclass
 class AppConfig:
     model: str = DEFAULT_MODEL
     model_max_retries: int = DEFAULT_MODEL_MAX_RETRIES
@@ -225,6 +270,7 @@ class AppConfig:
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     disable_builtin_skills: set[str] = field(default_factory=set)
     subagents: list[SubAgentConfig] = field(default_factory=list)
+    ambient_memory: AmbientMemoryConfig = field(default_factory=AmbientMemoryConfig)
 
     @property
     def writable_dirs(self) -> list[str]:
@@ -269,6 +315,80 @@ def _parse_folders(raw: Any) -> dict[str, str]:
         if name_str:
             folders[name_str] = mode_str
     return folders if folders else dict(DEFAULT_FOLDERS)
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _as_int(value: Any, default: int, *, minimum: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, parsed)
+
+
+def _as_optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_ambient_memory_config(raw: Any) -> AmbientMemoryConfig:
+    if not isinstance(raw, dict):
+        return AmbientMemoryConfig()
+
+    backend = str(raw.get("backend", "pylate")).strip().lower() or "pylate"
+    enabled = _as_bool(raw.get("enabled"), False)
+    if backend != "pylate":
+        enabled = False
+        backend = "pylate"
+
+    return AmbientMemoryConfig(
+        enabled=enabled,
+        backend=backend,
+        model=str(raw.get("model", DEFAULT_AMBIENT_MEMORY_MODEL)).strip()
+        or DEFAULT_AMBIENT_MEMORY_MODEL,
+        index_dir=str(raw.get("index_dir", DEFAULT_AMBIENT_MEMORY_INDEX_DIR)).strip()
+        or DEFAULT_AMBIENT_MEMORY_INDEX_DIR,
+        include_state=_as_bool(raw.get("include_state"), True),
+        include_journal=_as_bool(raw.get("include_journal"), True),
+        include_chat_history=_as_bool(raw.get("include_chat_history"), True),
+        include_events=_as_bool(raw.get("include_events"), False),
+        max_results=_as_int(raw.get("max_results"), 3, minimum=1),
+        snippet_words=_as_int(raw.get("snippet_words"), 12, minimum=4),
+        min_score=_as_optional_float(raw.get("min_score")),
+        candidate_limit=_as_int(raw.get("candidate_limit"), 100, minimum=1),
+        refresh_interval_seconds=_as_int(
+            raw.get("refresh_interval_seconds"), 300, minimum=1
+        ),
+        retrieval_timeout_seconds=_as_int(
+            raw.get("retrieval_timeout_seconds"), 2, minimum=1
+        ),
+        indexing_timeout_seconds=_as_int(
+            raw.get("indexing_timeout_seconds"), 120, minimum=1
+        ),
+        result_ttl_seconds=_as_int(raw.get("result_ttl_seconds"), 60, minimum=1),
+        max_tool_result_bytes=_as_int(
+            raw.get("max_tool_result_bytes"), 16000, minimum=1
+        ),
+        prompt_injection=_as_bool(raw.get("prompt_injection"), True),
+        tool_result_injection=_as_bool(raw.get("tool_result_injection"), True),
+    )
 
 
 def _parse_subagent_configs(raw: Any) -> list[SubAgentConfig]:
@@ -328,6 +448,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         mcp_servers=parse_mcp_server_configs(loaded.get("mcp_servers")),
         disable_builtin_skills=_normalize_id_list(loaded.get("disable_builtin_skills")),
         subagents=_parse_subagent_configs(loaded.get("subagents")),
+        ambient_memory=_parse_ambient_memory_config(loaded.get("ambient_memory")),
     )
 
 

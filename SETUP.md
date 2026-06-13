@@ -260,6 +260,26 @@ api_port: 0
 web_ui_port: 8084
 web_ui_host: 127.0.0.1
 web_ui_channel_id: local-web
+ambient_memory:
+  enabled: false
+  backend: pylate
+  model: lightonai/GTE-ModernColBERT-v1
+  index_dir: logs/ambient-memory
+  include_state: true
+  include_journal: true
+  include_chat_history: true
+  include_events: false
+  max_results: 3
+  snippet_words: 12
+  min_score: null
+  candidate_limit: 100
+  refresh_interval_seconds: 300
+  retrieval_timeout_seconds: 2
+  indexing_timeout_seconds: 120
+  result_ttl_seconds: 60
+  max_tool_result_bytes: 16000
+  prompt_injection: true
+  tool_result_injection: true
 folders:
   state: rw
   skills: rw
@@ -280,8 +300,19 @@ folders:
 | `web_ui_port` | Local web chat port (default `8084`; `0` disables it) |
 | `web_ui_host` | Bind host for the web UI (default `127.0.0.1`) |
 | `web_ui_channel_id` | Synthetic channel ID used by the built-in web chat |
+| `ambient_memory` | Opt-in associative memory index for cold, out-of-prompt memory surfaces |
 | `folders` | Map of folder names to access mode (`rw` or `ro`) |
 | `mcp_servers` | List of MCP server configs (see below) |
+
+### Ambient Memory
+
+`ambient_memory.enabled` defaults to `false`. Enable it only after installing the optional ambient-memory extra:
+
+```bash
+uv add "open-strix[ambient-memory]"
+```
+
+Ambient retrieval indexes cold surfaces that are not already in the prompt: ordinary `state/` markdown, older journal rows, and older chat history. It does not index memory blocks or phone-book files. Retrieval failures fail open: the agent continues normally and logs why ambient memory was disabled or skipped.
 
 ### Folders
 

@@ -27,6 +27,14 @@ from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
+from .ambient_memory import (
+    AmbientMemoryService,
+    AmbientQueryContext,
+    DisabledAmbientMemoryService,
+    chat_record_id,
+    journal_record_id,
+    query_fingerprint,
+)
 from .builtin_skills import BUILTIN_HOME_DIRNAME, sync_builtin_skills_home
 from .config import (
     DEFAULT_CONFIG,
@@ -384,6 +392,16 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         )
         self.hooks = HookManager(self)
         self.hooks.discover()
+        self._ambient_turn_sequence = 0
+        self._ambient_boundary_sequence = 0
+        self.ambient_memory = DisabledAmbientMemoryService()
+        if self.config.ambient_memory.enabled:
+            self.ambient_memory = AmbientMemoryService(
+                layout=self.layout,
+                config=self.config.ambient_memory,
+                backend=self._build_ambient_memory_backend(),
+                log_event=self.log_event,
+            )
         self.ui_plugins = UIPluginManager(self)
 
         self.discord_client: DiscordBridge | None = None
@@ -435,6 +453,12 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     if not channel_id or not author:
                         continue
                     attachments = record.get("attachments")
+                    message_id_value = record.get("message_id")
+                    message_id = (
+                        str(message_id_value).strip()
+                        if message_id_value not in (None, "")
+                        else None
+                    )
                     self._remember_message(
                         channel_id=channel_id,
                         author=author,
@@ -446,7 +470,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         ]
                         if isinstance(attachments, list)
                         else [],
-                        message_id=str(record.get("message_id", "")).strip() or None,
+                        message_id=message_id,
                         is_bot=bool(record.get("is_bot")),
                         source=str(record.get("source", "discord")).strip() or "discord",
                         timestamp=str(record.get("timestamp", "")).strip() or None,
@@ -473,6 +497,17 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         message_id=message_id,
                         emoji=emoji,
                     )
+
+    def _build_ambient_memory_backend(self) -> Any:
+        from .ambient_memory import create_ambient_backend
+
+        index_dir = self.home / self.config.ambient_memory.index_dir
+        self.log_event("ambient_memory_started", backend=self.config.ambient_memory.backend)
+        return create_ambient_backend(
+            index_dir=index_dir,
+            config=self.config.ambient_memory,
+            log_event=self.log_event,
+        )
 
     def _create_agent(
         self,
@@ -810,7 +845,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         )
         return git_result
 
-    def _render_prompt(self, event: AgentEvent) -> str:
+    def _render_prompt_with_ambient_metadata(
+        self,
+        event: AgentEvent,
+    ) -> tuple[str, frozenset[str]]:
         journal_entries = _tail_jsonl(
             self.layout.journal_log,
             self.config.journal_entries_in_prompt,
@@ -831,7 +869,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 recent_candidates = channel_recent
         recent_messages = recent_candidates[-self.config.discord_messages_in_prompt :]
 
-        return render_turn_prompt(
+        prompt = render_turn_prompt(
             journal_entries=journal_entries,
             memory_blocks=blocks,
             recent_messages=recent_messages,
@@ -851,6 +889,85 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             last_turn_failure=self._last_turn_failure,
             aliases_block=render_aliases_block(self.phone_book),
         )
+        visible_ids = {journal_record_id(row) for row in journal_entries}
+        visible_ids.update(chat_record_id(row) for row in recent_messages)
+        return prompt, frozenset(visible_ids)
+
+    def _render_prompt(self, event: AgentEvent) -> str:
+        prompt, _visible_ids = self._render_prompt_with_ambient_metadata(event)
+        return prompt
+
+    def _ambient_context(
+        self,
+        *,
+        event: AgentEvent,
+        query_text: str,
+        prompt_visible_ids: frozenset[str] = frozenset(),
+    ) -> AmbientQueryContext:
+        return AmbientQueryContext(
+            session_id=self.session_id,
+            turn_sequence=self._ambient_turn_sequence,
+            boundary_sequence=self._ambient_boundary_sequence,
+            event_type=event.event_type,
+            channel_id=event.channel_id,
+            source_id=event.source_id,
+            query_text=query_text,
+            query_fingerprint=query_fingerprint(query_text),
+            prompt_visible_ids=prompt_visible_ids,
+            created_at=datetime.now(tz=UTC),
+            ttl_seconds=self.config.ambient_memory.result_ttl_seconds,
+        )
+
+    def ambient_pre_tool_call(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> AmbientQueryContext | None:
+        if not self.config.ambient_memory.enabled:
+            return None
+        self._ambient_boundary_sequence += 1
+        query_text = f"tool={tool_name}\nargs={json.dumps(args, sort_keys=True, default=str)}"
+        context = AmbientQueryContext(
+            session_id=self.session_id,
+            turn_sequence=self._ambient_turn_sequence,
+            boundary_sequence=self._ambient_boundary_sequence,
+            event_type=str(self.current_event_label or ""),
+            channel_id=self.current_channel_id,
+            source_id=None,
+            query_text=query_text,
+            query_fingerprint=query_fingerprint(query_text),
+            prompt_visible_ids=frozenset(),
+            created_at=datetime.now(tz=UTC),
+            ttl_seconds=self.config.ambient_memory.result_ttl_seconds,
+        )
+        self.ambient_memory.observe_boundary(context)
+        return context
+
+    def ambient_post_tool_success(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        result: Any,
+        *,
+        ambient_context: AmbientQueryContext | None,
+        return_direct: bool,
+    ) -> Any:
+        if not self.config.ambient_memory.enabled:
+            return result
+        if not self.config.ambient_memory.tool_result_injection:
+            return result
+        if return_direct or tool_name in {"send_message", "react"}:
+            return result
+        if not isinstance(result, str):
+            return result
+        if len(result.encode("utf-8")) > self.config.ambient_memory.max_tool_result_bytes:
+            return result
+        if ambient_context is None:
+            return result
+        append = self.ambient_memory.consume_ready(ambient_context)
+        if not append:
+            return result
+        return f"{result}\n\n{append}"
 
     def _load_blocks_for_prompt(self) -> list[dict[str, Any]]:
         blocks = self._load_memory_blocks()
@@ -966,6 +1083,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
     async def _process_event(self, event: AgentEvent) -> None:
         self._current_turn_sent_messages = []
         self._reset_send_message_circuit_breaker()
+        self._ambient_turn_sequence += 1
+        self._ambient_boundary_sequence = 0
         # Turn-time instrumentation (#91): baseline measurement that lets the
         # eventual same-turn batching layer be evaluated against real numbers.
         turn_start = time.monotonic()
@@ -979,10 +1098,18 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         repair_invoke_count = 0
 
         prompt_start = time.monotonic()
+        prompt_visible_ids = frozenset()
         if event.continuation_messages:
             prompt = event.prompt
         else:
-            prompt = self._render_prompt(event)
+            prompt, prompt_visible_ids = self._render_prompt_with_ambient_metadata(event)
+        ambient_context = self._ambient_context(
+            event=event,
+            query_text=prompt,
+            prompt_visible_ids=prompt_visible_ids,
+        )
+        self.ambient_memory.trigger(ambient_context)
+        await asyncio.sleep(0)
         prompt_hook_event = await self.hooks.run_event(
             "pre_prompt",
             {
@@ -1011,6 +1138,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         append_prompt = prompt_hook_event.get("append_prompt")
         if isinstance(append_prompt, str) and append_prompt:
             prompt = f"{prompt}\n\n{append_prompt}"
+        await asyncio.sleep(0)
+        ambient_append = self.ambient_memory.consume_ready(ambient_context)
+        if self.config.ambient_memory.prompt_injection and ambient_append:
+            prompt = f"{prompt}\n\n{ambient_append}"
         timings["context_load_seconds"] = time.monotonic() - prompt_start
         self.log_event(
             "agent_invoke_start",
@@ -1333,6 +1464,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 "scheduler_running": self.scheduler.running,
             },
         )
+        if self.config.ambient_memory.enabled:
+            asyncio.create_task(self.ambient_memory.refresh())
 
         token = os.getenv(self.config.discord_token_env, "")
         if token:

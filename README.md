@@ -84,6 +84,8 @@ Two layers:
 
 No embeddings, no vector search. Just files and git. The agent's memory is whatever you can `cat`.
 
+Ambient associative memory is available as an opt-in extension. When enabled, it indexes cold memory surfaces that are not already in the prompt, such as ordinary `state/` notes, older journal rows, and older chat history. It does not index memory blocks or phone-book files, because those are already explicit memory surfaces the agent can use directly.
+
 ### Skills
 
 A skill is a markdown file in `skills/` with a YAML header. That's it. No SDK, no registration, no build step. The agent sees all skills in its prompt and invokes them by name.

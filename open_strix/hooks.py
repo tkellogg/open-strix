@@ -411,6 +411,11 @@ class HookManager:
                 )
                 next_args = kwargs
 
+            ambient_context = None
+            ambient_pre = getattr(hooks.strix, "ambient_pre_tool_call", None)
+            if callable(ambient_pre):
+                ambient_context = ambient_pre(tool_name, next_args)
+
             started_at = datetime.now(tz=UTC)
             try:
                 result = await wrapped.ainvoke(next_args)
@@ -444,7 +449,17 @@ class HookManager:
                     "current_event": getattr(hooks.strix, "current_event_label", None),
                 },
             )
-            return post_event.get("result", result)
+            final_result = post_event.get("result", result)
+            ambient_post = getattr(hooks.strix, "ambient_post_tool_success", None)
+            if callable(ambient_post):
+                final_result = ambient_post(
+                    tool_name,
+                    next_args,
+                    final_result,
+                    ambient_context=ambient_context,
+                    return_direct=bool(getattr(wrapped, "return_direct", False)),
+                )
+            return final_result
 
         hooked = StructuredTool.from_function(
             coroutine=_hooked_tool,
