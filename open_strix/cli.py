@@ -758,7 +758,7 @@ def _print_setup_walkthrough(home: Path) -> None:
         - model_request_timeout_seconds: per-request provider timeout before retrying
         - journal_entries_in_prompt: number of journal rows injected into prompt
         - discord_messages_in_prompt: number of recent Discord messages in prompt
-        - discord_token_env: env var to read Discord token from (default DISCORD_TOKEN)
+        - discord_token_env: env var to read the Discord token from (default DISCORD_TOKEN; change this if your token uses a different env var name)
         - always_respond_bot_ids: bot IDs this agent is allowed to respond to
         - api_port: loopback REST API port (0 disables it)
         - web_ui_port: built-in web chat port (default 8084; 0 disables it)

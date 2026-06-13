@@ -274,7 +274,7 @@ folders:
 | `model_max_retries` | Provider retry attempts for transient model/API failures |
 | `journal_entries_in_prompt` | Journal entries included in each prompt |
 | `discord_messages_in_prompt` | Recent Discord messages in each prompt |
-| `discord_token_env` | Env var name for Discord token |
+| `discord_token_env` | Env var name for Discord token (default `DISCORD_TOKEN`; change this if your runtime uses a different name) |
 | `always_respond_bot_ids` | Bot author IDs the agent responds to |
 | `api_port` | Loopback REST API port (`0` disables it) |
 | `web_ui_port` | Local web chat port (default `8084`; `0` disables it) |
