@@ -2135,10 +2135,13 @@ async def test_process_event_does_not_log_missing_send_message_when_send_message
 
 
 @pytest.mark.asyncio
-async def test_process_event_does_not_log_missing_send_message_when_no_final_text(
+async def test_process_event_logs_missing_send_message_on_empty_final_discord_turn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A discord_message turn that produces no send_message and no final_text
+    should still fire agent_turn_missing_send_message — it's a silent drop,
+    not intentional silence."""
     _stub_agent_factory(monkeypatch)
     app = app_mod.OpenStrixApp(tmp_path)
 
@@ -2161,4 +2164,4 @@ async def test_process_event_does_not_log_missing_send_message_when_no_final_tex
 
     events = _read_events(tmp_path)
     missing = [e for e in events if e.get("type") == "agent_turn_missing_send_message"]
-    assert missing == []
+    assert len(missing) == 1, f"expected 1 missing-send event, got {missing}"

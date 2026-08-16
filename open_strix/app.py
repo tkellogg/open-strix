@@ -81,6 +81,16 @@ UTC = timezone.utc
 LOG_ROLL_BYTES = 1_000_000
 TRANSIENT_PROVIDER_STATUS_CODES = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
 
+# Event types that represent direct human interaction.
+# A turn from one of these sources that produces no visible response (neither
+# send_message nor react) is a silent drop — not intentional silence.
+_INTERACTIVE_EVENT_TYPES: frozenset[str] = frozenset({
+    "discord_message",
+    "web_message",
+    "web_continue",
+    "stdin_message",
+})
+
 
 def utc_now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -1059,7 +1069,20 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             )
 
             tool_calls_in_turn = self._collect_tool_calls_in_turn(result)
-            if final_text and "send_message" not in tool_calls_in_turn:
+            # A react with no prose and no send_message is a valid acknowledgement
+            # (prompts.py:33). Suppress the detector in that case to avoid false
+            # positives on intentional reaction-only turns.
+            react_silent_ack = (
+                "react" in tool_calls_in_turn
+                and "send_message" not in tool_calls_in_turn
+                and not final_text
+            )
+            human_turn = event.event_type in _INTERACTIVE_EVENT_TYPES
+            if (
+                not react_silent_ack
+                and "send_message" not in tool_calls_in_turn
+                and (final_text or human_turn)
+            ):
                 self.log_event(
                     "agent_turn_missing_send_message",
                     source_event_type=event.event_type,
