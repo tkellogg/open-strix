@@ -23,8 +23,6 @@ jobs:
           --ignore=tests/test_agent_loop_live.py
           --ignore=tests/test_config_folders.py
           --ignore=tests/test_write_guard.py
-          --ignore=tests/test_config.py
-          --ignore=tests/test_worker.py
           --ignore=tests/test_api.py
           --ignore=tests/test_builtin_skills.py
 
