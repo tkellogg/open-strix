@@ -14,6 +14,25 @@ attachments:
 These are real files on disk. You can't see them inline, but you have several ways
 to inspect them depending on the file type.
 
+## Step 0: Try `read_file` Directly First
+
+Before reaching for OCR, metadata, or any of the workarounds below: just call
+`read_file` on the attachment path. Many models (including this one, depending on
+provider/runtime) are natively multimodal — `read_file` returns images, PDFs, and
+other binary attachments as multimodal content blocks you can see and reason about
+directly, the same way you'd see an image pasted into a chat.
+
+```
+read_file(file_path="state/attachments/12345-screenshot.png")
+```
+
+Don't assume you're text-only just because you're inside an agent harness. Try it
+first, and only fall back to Step 1's file-type triage and the OCR/metadata tricks
+in Step 2 if `read_file` genuinely fails to give you usable content (e.g., a format
+it can't decode, or a model that truly has no vision capability). Misdiagnosing your
+own capability and skipping straight to indirect fallbacks wastes steps and can
+produce worse (hallucinated or guessed) answers than just looking at the file.
+
 ## Step 1: Identify the File Type
 
 Check the extension:
