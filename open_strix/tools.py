@@ -4,6 +4,7 @@ import asyncio
 from difflib import SequenceMatcher
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import subprocess
@@ -94,6 +95,40 @@ def _name_from_url(url: str) -> str:
     if "." not in name:
         return f"{name}.bin"
     return name
+
+
+# Extensions deepagents' multimodal read_file dispatch actually recognizes
+# (see deepagents.backends.utils._EXTENSION_TO_FILE_TYPE). fetch_url's own
+# generic ".bin" fallback (used whenever the URL path has no extension) is
+# invisible to that dispatch, so a downloaded PDF or image with no extension
+# in its URL silently becomes an undecodable ".bin" file that read_file can't
+# render as multimodal content -- even though the bytes are fine and the
+# HTTP response told us exactly what they are via Content-Type.
+_CONTENT_TYPE_EXTENSION_OVERRIDES: dict[str, str] = {
+    "application/pdf": ".pdf",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/heic": ".heic",
+    "image/heif": ".heif",
+}
+
+
+def _extension_for_content_type(content_type: str) -> str | None:
+    """Map an HTTP Content-Type to a file extension read_file can dispatch on.
+
+    Only used to correct the ".bin" fallback name -- never overrides an
+    extension the URL itself already supplied, even if that extension looks
+    "wrong", since the URL's own naming may be intentional.
+    """
+    primary = content_type.split(";", 1)[0].strip().lower()
+    if not primary:
+        return None
+    if primary in _CONTENT_TYPE_EXTENSION_OVERRIDES:
+        return _CONTENT_TYPE_EXTENSION_OVERRIDES[primary]
+    guessed = mimetypes.guess_extension(primary)
+    return guessed
 
 
 def _download_url_bytes(
@@ -862,6 +897,14 @@ class ToolsMixin:
                     error_type_detail=type(exc).__name__,
                 )
                 return "fetch_url failed: could not write downloaded content."
+
+            if body_path.suffix.lower() == ".bin":
+                corrected_ext = _extension_for_content_type(fetched["content_type"])
+                if corrected_ext and corrected_ext != body_path.suffix.lower():
+                    corrected_path = body_path.with_suffix(corrected_ext)
+                    body_path.rename(corrected_path)
+                    body_path = corrected_path
+                    meta_path = cache_dir / f"{body_path.name}.meta.json"
 
             body_virtual_path = _virtual_path(body_path, root=self.home)
             meta_virtual_path = _virtual_path(meta_path, root=self.home)

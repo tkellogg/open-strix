@@ -16,7 +16,7 @@ import yaml
 
 import open_strix.app as app_mod
 import open_strix.web_ui as web_ui_mod
-from open_strix.tools import SendMessageCircuitBreakerStop
+from open_strix.tools import SendMessageCircuitBreakerStop, _extension_for_content_type
 
 
 class DummyAgent:
@@ -1398,6 +1398,72 @@ async def test_fetch_url_tool_rejects_non_http_scheme(
 
     result = await tools["fetch_url"].ainvoke({"url": "ftp://example.com/file.txt"})
     assert "Only http:// and https:// URLs are supported." in result
+
+
+def test_extension_for_content_type_maps_known_binary_types() -> None:
+    assert _extension_for_content_type("application/pdf") == ".pdf"
+    assert _extension_for_content_type("image/png") == ".png"
+    assert _extension_for_content_type("image/png; charset=binary") == ".png"
+    assert _extension_for_content_type("text/plain") == ".txt"
+    assert _extension_for_content_type("") is None
+    assert _extension_for_content_type("total garbage/not-a-type") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_tool_corrects_bin_extension_using_content_type(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: a PDF served from an extension-less URL path used to
+    get cached as '<hash>-download.bin', which deepagents' multimodal
+    read_file dispatch (keyed purely on file extension) cannot decode even
+    though the bytes are a perfectly valid PDF. fetch_url should use the
+    HTTP Content-Type to correct its own ".bin" fallback name."""
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    body = b"%PDF-1.4 fake pdf bytes for test purposes"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: Any) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        tools = {tool.name: tool for tool in app._build_tools()}
+        # No extension in the URL path -- this is exactly the case that used
+        # to fall back to the generic ".bin" name.
+        result = await tools["fetch_url"].ainvoke(
+            {"url": f"http://127.0.0.1:{server.server_port}/download?id=42"},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+    payload = yaml.safe_load(result)
+    assert payload["status"] == 200
+    assert payload["content_type"] == "application/pdf"
+    assert payload["file_path"].endswith(".pdf")
+    assert not payload["file_path"].endswith(".bin")
+
+    body_path = tmp_path / payload["file_path"].lstrip("/")
+    assert body_path.exists()
+    assert body_path.read_bytes() == body
+
+    metadata_path = tmp_path / payload["metadata_path"].lstrip("/")
+    assert metadata_path.exists()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["file_path"] == payload["file_path"]
 
 
 @pytest.mark.asyncio
