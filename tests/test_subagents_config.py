@@ -146,3 +146,106 @@ class TestLoadConfigSubagents:
         layout = RepoLayout(home=tmp_path, state_dir_name="state")
         config = load_config(layout)
         assert config.subagents == []
+
+
+class TestBuildSubagentsAllowedTools:
+    """Tests for open_strix.app.OpenStrixApp._build_subagents allowed_tools wiring.
+
+    Regression coverage for the bug where a subagent's ``allowed_tools``
+    config was parsed into ``SubAgentConfig`` but never passed through to the
+    deepagents ``SubAgent`` spec, so every subagent silently inherited the
+    full main-agent toolset (including e.g. ``send_message``) regardless of
+    what the operator restricted it to.
+    """
+
+    @staticmethod
+    def _make_app(tmp_path: Path, subagents: list[dict]) -> "app_mod.OpenStrixApp":
+        import open_strix.app as app_mod
+
+        config_data = {"model": "test-model", "subagents": subagents}
+        (tmp_path / "config.yaml").write_text(yaml.safe_dump(config_data), encoding="utf-8")
+        return app_mod.OpenStrixApp(tmp_path)
+
+    @staticmethod
+    def _fake_tool(name: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(name=name)
+
+    def test_no_allowed_tools_omits_tools_key(self, tmp_path: Path) -> None:
+        app = self._make_app(
+            tmp_path,
+            [{"name": "fast", "description": "no restriction"}],
+        )
+        tools = [self._fake_tool("send_message"), self._fake_tool("read_file")]
+        specs = app._build_subagents(tools)
+        assert len(specs) == 1
+        assert "tools" not in specs[0]
+
+    def test_allowed_tools_resolves_to_tool_objects(self, tmp_path: Path) -> None:
+        app = self._make_app(
+            tmp_path,
+            [
+                {
+                    "name": "researcher",
+                    "description": "restricted research agent",
+                    "allowed_tools": ["read_file", "web_search"],
+                }
+            ],
+        )
+        read_file_tool = self._fake_tool("read_file")
+        web_search_tool = self._fake_tool("web_search")
+        send_message_tool = self._fake_tool("send_message")
+        tools = [read_file_tool, web_search_tool, send_message_tool]
+
+        specs = app._build_subagents(tools)
+
+        assert len(specs) == 1
+        assert specs[0]["tools"] == [read_file_tool, web_search_tool]
+        assert send_message_tool not in specs[0]["tools"]
+
+    def test_empty_allowed_tools_list_produces_empty_tools(self, tmp_path: Path) -> None:
+        app = self._make_app(
+            tmp_path,
+            [{"name": "sandboxed", "description": "no tools at all", "allowed_tools": []}],
+        )
+        tools = [self._fake_tool("read_file")]
+        specs = app._build_subagents(tools)
+        assert specs[0]["tools"] == []
+
+    def test_unknown_tool_name_is_skipped_not_raised(self, tmp_path: Path) -> None:
+        app = self._make_app(
+            tmp_path,
+            [
+                {
+                    "name": "researcher",
+                    "description": "restricted",
+                    "allowed_tools": ["read_file", "does_not_exist"],
+                }
+            ],
+        )
+        read_file_tool = self._fake_tool("read_file")
+        specs = app._build_subagents([read_file_tool])
+        assert specs[0]["tools"] == [read_file_tool]
+
+    def test_multiple_subagents_independent_tool_sets(self, tmp_path: Path) -> None:
+        app = self._make_app(
+            tmp_path,
+            [
+                {
+                    "name": "researcher",
+                    "description": "read-only",
+                    "allowed_tools": ["read_file"],
+                },
+                {
+                    "name": "unrestricted",
+                    "description": "inherits everything",
+                },
+            ],
+        )
+        read_file_tool = self._fake_tool("read_file")
+        send_message_tool = self._fake_tool("send_message")
+        specs = app._build_subagents([read_file_tool, send_message_tool])
+
+        assert specs[0]["tools"] == [read_file_tool]
+        assert "tools" not in specs[1]

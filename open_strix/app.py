@@ -528,7 +528,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             tools.extend(extra_tools)
         tools = self.hooks.wrap_tools(tools)
 
-        subagents = self._build_subagents()
+        subagents = self._build_subagents(tools)
 
         return create_deep_agent(
             model=model,
@@ -539,10 +539,21 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             subagents=subagents or None,
         )
 
-    def _build_subagents(self) -> list[SubAgent]:
-        """Build SubAgent specs from config.yaml subagents list."""
+    def _build_subagents(self, tools: list[Any]) -> list[SubAgent]:
+        """Build SubAgent specs from config.yaml subagents list.
+
+        Args:
+            tools: The fully-resolved main-agent tool list (post hook-wrapping).
+                Used to resolve each subagent's ``allowed_tools`` names to actual
+                tool objects, so a restricted subagent cannot silently inherit
+                tools (e.g. ``send_message``) it was explicitly denied.
+        """
         if not self.config.subagents:
             return []
+
+        import logging
+
+        tools_by_name = {getattr(t, "name", None): t for t in tools}
 
         specs: list[SubAgent] = []
         for cfg in self.config.subagents:
@@ -553,6 +564,20 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             }
             if cfg.model:
                 spec["model"] = _model_for_deep_agents(cfg.model)
+            if cfg.allowed_tools is not None:
+                resolved = []
+                for name in cfg.allowed_tools:
+                    tool = tools_by_name.get(name)
+                    if tool is None:
+                        logging.warning(
+                            "subagent %r: allowed_tools entry %r does not match "
+                            "any registered tool; skipping",
+                            cfg.name,
+                            name,
+                        )
+                        continue
+                    resolved.append(tool)
+                spec["tools"] = resolved
             specs.append(spec)
         return specs
 
