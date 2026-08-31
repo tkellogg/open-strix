@@ -84,17 +84,72 @@ This means the first test climb from an agent without a coding agent gets lightw
 
 The results log is the climber's only memory between iterations. After each iteration, the climber should read the last N entries to understand what has been tried and what worked. The log is not a record for the operator — it is the climber's operational memory.
 
+### Autonomy Principle
+
+**The climber runs forever until explicitly stopped.** This is the default, not an option.
+
+A climb that finishes and waits for human input is not autonomous — it's a script. The whole point is that the climber keeps going: trying new mutations, backtracking to earlier checkpoints, starting new bases. The human supervises; the climber explores.
+
+What "forever-running" means in practice:
+- A plateau on one approach → try a different mutation type, not stop
+- A completed run (model converged) → start a new run with different base or parameters
+- A crash → self-diagnose, fix, retry — don't wait for human intervention
+- Budget exhausted on one climb → report results, start the next climb in the queue
+
+The climber should be harder to stop than to start. If you have to check on it constantly, the autonomy isn't working.
+
+### Loop Structure
+
+Different climbs need different loop structures. There is no universal architecture — the loop should match the problem. One pattern that emerged from SAE training:
+
+1. **Inner loop** (exploration) — try mutations from the current checkpoint. Needs a cap to prevent thrashing, but the cap is per-attempt, not per-climb.
+2. **Middle loop** (construction) — consecutive checkpoints building one model/artifact. Stop-checking lives here (overtrain prevention, convergence detection).
+3. **Outer loop** (autonomy) — when a run finishes or the middle loop's stop condition fires, keep going. New base, backtrack to earlier checkpoint, try a different direction.
+
+**The critical mistake:** collapsing the middle and outer loops so that the middle loop's stop condition kills the entire climb. The stop-check ("consecutive runs didn't improve") is correct for the middle loop but the outer loop should catch that termination and treat it as "this path is done, try another" — not "we're done entirely."
+
+This three-loop structure is NOT universal. It's one design for one class of climbs (long training runs with checkpoints). Other climbs may be single-loop. The principle is: make sure your loop structure separates "this attempt is done" from "the whole search is done."
+
 ### Supervision Protocol
 
-The climber has minimal autonomy by design. It cannot flag that it's stuck or incorporate new ideas on its own. The supervising agent must monitor actively.
+The supervisor monitors; the climber runs. Not the other way around.
+
+**Supervisor responsibilities:**
+- Watch for structural problems the climber can't self-diagnose
+- Inject new information when the search space needs expansion (git commits to workspace)
+- Kill climbs that are no longer relevant (goal changed, not just stuck)
+- Declare peaks and set up the next climb
 
 **Intervention decisions:**
-- **Keep running** — trend positive, still improving
-- **Investigate** — plateau detected, consider scope expansion or metric pivot
+- **Keep running** — trend positive or climber is self-recovering from plateaus
+- **Investigate** — climber is self-recovering but the recovery pattern looks wrong
 - **Inject information** — make git commits that change the workspace; the climber picks up changes next iteration
-- **Kill** — stuck, budget exceeded, or hill no longer relevant
+- **Kill** — goal changed, budget hard-capped, or the hill itself was wrong (not just stuck)
 
 **Peak detection → ridgeline traversal:** When the hill is peaked, the supervising agent declares the peak, selects the next hill, and either reconfigures the current climb or starts a new one. See `philosophy.md` for the full framework.
+
+## Remote Deployment
+
+Climbers often need to run on machines with resources the supervising agent doesn't have (GPU, large datasets, specific hardware). This creates a communication gap.
+
+**The pattern:**
+1. **Ship the loop** — the entire climb directory (program.md, config.json, eval/, workspace/) gets deployed to the remote machine
+2. **Climber runs independently** — no real-time communication with the supervisor
+3. **Results flow back** — logs/results.jsonl is the interface. Pull periodically, or push on completion.
+4. **Supervisor operates asynchronously** — reads results, decides on intervention, pushes workspace changes
+
+**What this means for the skill:**
+- The climb directory must be self-contained — everything the climber needs is in that directory
+- The eval script must work on the target machine (correct deps, data paths)
+- The climber's self-recovery is more important when there's no real-time supervisor
+- Fast feedback matters MORE on remote machines — you can't watch the terminal
+
+**Communication gap workarounds:**
+- Structured log files that the supervisor can pull and parse
+- Checkpoint notifications (webhook, file write to shared storage, message to channel)
+- Heartbeat files (write timestamp every N iterations — if stale, something died)
+
+This is an active gap in the framework. Good messaging between the supervisor and a remote climber is an unsolved problem. Document your approach when you find one that works.
 
 ## Background Reading
 
