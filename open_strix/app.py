@@ -1335,10 +1335,11 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             },
         )
 
-        token = os.getenv(self.config.discord_token_env, "")
+        token_env_name = self.config.discord_token_env.strip() or "DISCORD_TOKEN"
+        token = os.getenv(token_env_name, "")
         if token:
             self.discord_client = DiscordBridge(self)
-            self.log_event("discord_connecting")
+            self.log_event("discord_connecting", token_env=token_env_name)
             await self.discord_client.start(token)
             return
 
