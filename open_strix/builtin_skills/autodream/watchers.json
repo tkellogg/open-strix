@@ -1,0 +1,9 @@
+{
+  "watchers": [
+    {
+      "name": "autodream-gate",
+      "command": "uv run python .open_strix_builtin_skills/autodream/gate_check.py",
+      "trigger": "turn_complete"
+    }
+  ]
+}
