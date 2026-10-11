@@ -127,9 +127,9 @@ class ShellJobRegistry:
         the job so the completion callback can resume it in-place.
 
         on_complete, if provided, is invoked from the waiter thread once the
-        subprocess exits and exit_code/finished_at have been set. Exceptions
-        raised by the callback are caught and dropped so the registry stays
-        intact.
+        subprocess exits, output is drained, and exit_code/finished_at are set.
+        Exceptions raised by the callback are caught and dropped so the registry
+        stays intact.
         """
         job_id = self._make_job_id()
         stdout_path = self.jobs_dir / f"{job_id}.out"
@@ -193,6 +193,9 @@ class ShellJobRegistry:
                 rc = proc.wait()
             except Exception:
                 rc = -1
+            # The callback reads output files, so flush both streams first.
+            stdout_thread.join()
+            stderr_thread.join()
             with job._lock:
                 job.exit_code = rc
                 job.finished_at = time.time()
@@ -203,18 +206,20 @@ class ShellJobRegistry:
                     # Never let a callback error break the registry.
                     pass
 
-        threading.Thread(
+        stdout_thread = threading.Thread(
             target=_drain,
             args=(proc.stdout, stdout_f, job.touch),
             daemon=True,
             name=f"shelljob-out-{job_id}",
-        ).start()
-        threading.Thread(
+        )
+        stderr_thread = threading.Thread(
             target=_drain,
             args=(proc.stderr, stderr_f, job.touch),
             daemon=True,
             name=f"shelljob-err-{job_id}",
-        ).start()
+        )
+        stdout_thread.start()
+        stderr_thread.start()
         threading.Thread(
             target=_waiter,
             daemon=True,
